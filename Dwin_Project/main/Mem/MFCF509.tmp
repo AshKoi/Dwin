@@ -1,0 +1,2001 @@
+/******************************************************************************************************
+* 2013-2014 益邦科技有限公司
+* 文件名: 
+* 创建人: 王一凡
+* 日　期: 2013/09/21
+* 修改人: 
+* 日　期: 
+* 描　述: 
+* 版　本: V1.0
+*****************************************************************************************************/
+#include "Global.h"
+#include "MemDrv.h"
+#include "MemTbl.h"
+#include "MemDrvExt.h"
+#include "DataItem.h"
+#include "FlashFile.h"
+#include "SysRes.h"
+#include "LinkcomExt.h"
+#include "Base.h"
+
+
+
+/**************************************************************************************************
+                                          变量
+***************************************************************************************************/
+static INT8U	g_nMemDrvBuf[1024];							//读写具有校验的数据库表用到的临时缓冲
+static INT8U	g_nMemDrvBufUnit[1];						//写具有校验的整张表时，循环计算每项校验所用
+
+static INT8U    g_nMemClearBuf[1024];                       //清flash所用
+/**************************************************************************************************
+                                          hanshu
+***************************************************************************************************/
+#if 0
+#endif
+/********************************************************************************
+* 函数名: MemDrvBufSemPend
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能: 数据库所用缓冲信号量
+*********************************************************************************/
+void MemDrvBufSemPend(void)
+{
+	INT8U nErr = 0;
+	
+	OSSemPend(g_pSem[SEM_DRV_CASH_IDX], 0, &nErr);  //加锁	
+}
+
+void MemDrvBufSemPost(void)
+{
+	OSSemPost(g_pSem[SEM_DRV_CASH_IDX]);  //加锁	
+}
+
+/********************************************************************************
+* 函数名: MemDrvBufGet
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能: 
+*********************************************************************************/
+INT8U* MemDrvBufGet(void)
+{
+	return &g_nMemDrvBuf[0];
+}
+
+/********************************************************************************
+* 函数名: MemDrvBufSizeGet
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能: 
+*********************************************************************************/
+INT32U MemDrvBufSizeGet(void)
+{
+	return sizeof(g_nMemDrvBuf);
+}
+
+/********************************************************************************
+* 函数名: MemDrvBufUnitGet
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能: 
+*********************************************************************************/
+INT8U* MemDrvBufUnitGet(void)
+{
+	return &g_nMemDrvBufUnit[0];
+}
+
+/********************************************************************************
+* 函数名: MemDrvBufSizeGet
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能: 
+*********************************************************************************/
+INT32U MemDrvBufSizeUnitGet(void)
+{
+	return sizeof(g_nMemDrvBufUnit);
+}
+
+#if 0
+#endif
+/********************************************************************************
+* 函数名:
+* 输　入:
+*			INT8U		nType :  0,铁电；1,flash；2,ram
+* 输　出:
+* 返  回:
+* 功  能: 存储介质初始化
+*********************************************************************************/
+INT32S MemoryWrite(INT32U nAddr, const INT8U* pBuff, INT32U nLen , INT8U nType)
+{
+	INT32S 					nRet 			= 0;
+	INT8U					nErr 			= 0;
+	INT8U 					i 				= 0;
+	INT8U  					nTmpBuf[256]	= {0};
+	INT32U 					nTmpLen 		= 0;
+    INT32U 					nOffset 		= 0;
+	
+    if (NULL == pBuff)
+    {
+        return -1;
+    }
+	if(nType == MEM_FRAM)
+    {
+    	OSSemPend(g_pSem[SEM_FRAM_IDX], 0, &nErr);
+    	//nRet = FRAMWrite(nAddr, pBuff, nLen); 
+		for (i = 0; i < 3; i++)
+		{
+			nRet = FRAMWrite(nAddr, pBuff, nLen); 
+		#if 1
+			break;
+		#else
+			for (nOffset = 0; nOffset < nLen; nOffset += nTmpLen)
+			{
+				memset(&nTmpBuf[0], 0, sizeof(nTmpBuf));
+				nTmpLen = GET_MIN((nLen - nOffset),  sizeof(nTmpBuf));
+				FRAMRead(nAddr + nOffset, &nTmpBuf[0], nTmpLen);
+				if (memcmp2(&nTmpBuf[0], (INT8U *)((INT8U *)pBuff + nOffset), nTmpLen))
+				{
+					break;	
+				}
+			}
+			if (nOffset >= nLen)  //写核查通过
+			{
+				break;
+			} 
+		#endif
+		}
+        if (i >= 3)
+        {
+            nRet = -1;        
+        }
+		OSSemPost(g_pSem[SEM_FRAM_IDX]);
+    }
+	else if (nType == MEM_FLASH)
+	{
+		OSSemPend(g_pSem[SEM_FLASH_IDX], 0, &nErr);
+		//nRet = FlashEraseWrite(nAddr, pBuff, nLen);
+		for (i = 0; i < 3; i++)
+		{
+			nRet = FlashEraseWrite(nAddr, pBuff, nLen);
+			for (nOffset = 0; nOffset < nLen; nOffset += nTmpLen)
+			{
+				memset(&nTmpBuf[0], 0, sizeof(nTmpBuf));
+				nTmpLen = GET_MIN((nLen - nOffset),  sizeof(nTmpBuf));
+				FlashRead(nAddr + nOffset, &nTmpBuf[0], nTmpLen);
+				if (memcmp2(&nTmpBuf[0], (INT8U *)((INT8U *)pBuff + nOffset), nTmpLen))
+				{
+					_API_FLASH_PowerOffOn();   //flash复位	
+					break;	
+				}
+			}
+			if (nOffset >= nLen)  //写核查通过
+			{
+				break;
+			} 
+		}
+        if (i >= 3)
+        {
+            nRet = -1;        
+        }
+        
+		OSSemPost(g_pSem[SEM_FLASH_IDX]);
+	}
+    else
+    {
+        memmove((INT8U*)nAddr, pBuff, nLen);  
+        nRet = nLen;
+    }
+    
+    return nRet;
+}
+
+/********************************************************************************
+* 函数名:
+* 输　入:
+*			INT8U		nType :  0,铁电；1,flash；2,ram
+* 输　出:
+* 返  回:
+* 功  能: 存储介质初始化
+*********************************************************************************/
+INT32S MemoryRead(INT32U nAddr, INT8U* pBuff, INT32U nLen , INT8U nType)
+{
+	INT32S 	nRet = 0;
+	INT8U	nErr = 0;
+	
+    if (NULL == pBuff)
+    {
+        return -1;
+    }
+	if(nType == MEM_FRAM)
+    {
+		OSSemPend(g_pSem[SEM_FRAM_IDX], 0, &nErr);
+    	nRet = FRAMRead(nAddr, pBuff, nLen);  
+		OSSemPost(g_pSem[SEM_FRAM_IDX]);
+    }
+	else if (nType == MEM_FLASH)
+	{
+		OSSemPend(g_pSem[SEM_FLASH_IDX], 0, &nErr);
+		nRet = FlashRead(nAddr, pBuff, nLen);
+		OSSemPost(g_pSem[SEM_FLASH_IDX]);
+	}
+    else
+    {
+        memmove(pBuff, (INT8U*)nAddr, nLen);  
+        nRet = nLen;
+    }
+    
+    return nRet;
+}
+/********************************************************************************
+* 函数名:
+* 输　入:
+*			INT8U		nType :  0,铁电；1,flash；2,ram
+* 输　出:
+* 返  回:
+* 功  能: 存储介质初始化
+*********************************************************************************/
+void MemoryClear(INT32U nStart, INT32U nLen, INT8U nVal, INT8U nType)
+{
+    INT8U*			pBuf				= &g_nMemClearBuf[0];//&g_nGw3761SendBuf[0];
+	INT16U			nSize				= sizeof(g_nMemClearBuf);//sizeof(g_nGw3761SendBuf);
+    
+    INT32U  		nOffset   			= 0;
+    INT32U  		nTmp     			= 0;
+	INT8U			nErr				= 0;
+ 
+    while(nOffset < nLen)
+    {	
+		nTmp =  GET_MIN(nSize, nLen - nOffset); 
+       	//OSSemPend(g_pSem[SEM_GW3761_BUF_IDX], 0, &nErr);
+        OSSemPend(g_pSem[SEM_CLEAR_BUF_IDX], 0, &nErr);
+		memset(&pBuf[0], nVal, nSize);
+		MemoryWrite(nStart + nOffset, &pBuf[0], nTmp, nType); 
+		//OSSemPost(g_pSem[SEM_GW3761_BUF_IDX]);
+        OSSemPost(g_pSem[SEM_CLEAR_BUF_IDX]);
+        
+        nOffset += nTmp;
+    } 
+}
+
+
+
+/********************************************************************************
+* 函数名:_API_FLASH_PowerOffOn
+* 输　入:
+
+* 输　出:
+* 返  回:
+* 功  能: flash掉电处理
+*********************************************************************************/
+void _API_FLASH_PowerOffOn(void)
+{
+	INT8U	nErr = 0;
+
+	OSSemPend(g_pSem[SEM_FRAM_IDX], 0, &nErr);
+	
+	FlashPowerOffOn();
+	OSTimeDlyHMSM(0, 0, 0, 100);
+	FRAMInit();
+    SST25Init();
+    
+	OSSemPost(g_pSem[SEM_FRAM_IDX]);
+
+	
+}
+#if 0
+#endif
+/********************************************************************************
+* 函数名:
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能: 读函数
+*********************************************************************************/
+INT8S MemRead(const char* pFileName, INT8U nMedium, INT32U nAddr, INT32U nLen, void *pBuf)
+{
+	INT32S  nRet    = RET_ERR_OK;
+
+	if ((MEM_FLASH == nMedium) && (NULL != pFileName))
+	{
+		nRet = FlashFileRead(pFileName, nAddr, pBuf, nLen);
+	}
+	else
+	{
+		nRet = MemoryRead(nAddr, pBuf, nLen , nMedium);
+	}
+
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+
+	return RET_ERR_OK;
+}
+
+/********************************************************************************
+* 函数名:
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能: 写函数
+*********************************************************************************/
+INT8S MemWrite(const char* pFileName, INT8U nMedium, INT32U nAddr, INT32U nLen, const void *pBuf)
+{
+	INT32S	nRet	= RET_ERR_OK;
+
+	if ((MEM_FLASH == nMedium) && (NULL != pFileName))
+	{
+		nRet = FlashFileWrite(pFileName, nAddr, pBuf, nLen);
+	}
+	else
+	{
+		nRet = MemoryWrite(nAddr, pBuf, nLen , nMedium);
+	}
+
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+
+	return RET_ERR_OK;
+}
+
+/********************************************************************************
+* 函数名:
+* 输　入:
+*			INT8U		nType :  0,铁电；1,flash；2,ram
+* 输　出:
+* 返  回:
+* 功  能: 
+*********************************************************************************/
+INT32S MemCopyFile(char* pDesFilename, INT32U nDesAddr, char* pSrcFilename, INT32U nSrcAddr, INT32U nLen , INT8U nType)
+{
+	INT8U*			pBuf				= &g_nMemClearBuf[0];
+	INT16U			nSize				= sizeof(g_nMemClearBuf);
+    INT32U  		nOffset   			= 0;
+    INT32U  		nTmp     			= 0;
+	INT8U			nErr				= 0;
+    
+    while(nOffset < nLen)
+    {
+		nTmp =  GET_MIN(nSize, nLen - nOffset); 
+		OSSemPend(g_pSem[SEM_CLEAR_BUF_IDX], 0, &nErr);
+		memset(pBuf, 0, nSize);
+		MemRead(pSrcFilename, nType, nSrcAddr + nOffset, nTmp, pBuf);
+		MemWrite(pDesFilename, nType, nDesAddr + nOffset, nTmp, pBuf);
+		OSSemPost(g_pSem[SEM_CLEAR_BUF_IDX]);
+        
+        nOffset += nTmp;
+    }  
+
+    return 0;
+}
+/********************************************************************************
+* 函数名:
+* 输　入:
+*			INT8U		nType :  0,铁电；1,flash；2,ram
+* 输　出:
+* 返  回:
+* 功  能: 存储介质初始化
+*********************************************************************************/
+void MemClear(char* pFilename, INT32U nStart, INT32U nLen, INT8U nVal, INT8U nType)
+{
+    INT8U*			pBuf				= &g_nMemClearBuf[0];
+	INT16U			nSize				= sizeof(g_nMemClearBuf);
+    INT32U  		nOffset   			= 0;
+    INT32U  		nTmp     			= 0;
+	INT8U			nErr				= 0;
+    
+    //pBuf = MemDrvBufGet();
+    //nSize = MemDrvBufSizeGet();
+ 
+    while(nOffset < nLen)
+    {	
+		nTmp =  GET_MIN(nSize, nLen - nOffset); 
+       	OSSemPend(g_pSem[SEM_CLEAR_BUF_IDX], 0, &nErr);
+        //MemDrvBufSemPend();
+		memset(&pBuf[0], nVal, nSize);
+		MemWrite(pFilename, nType, nStart + nOffset, nTmp, &pBuf[0]); 
+		OSSemPost(g_pSem[SEM_CLEAR_BUF_IDX]);
+        //MemDrvBufSemPost();
+        
+        nOffset += nTmp;
+    } 
+}
+
+
+
+
+
+#if 0
+#endif
+/********************************************************************************
+* 函数名:
+*			INT16U 					nPreNum				以当前nNext为基准，查找往前nPreNum个日
+*			INT8U					nType				实时、日、月、曲线、抄表日
+* 输　入:
+*			void* 					pTime				返回的日期
+*			INT16U*					pIdx				返回的物理下标
+* 返  回:
+* 功  能: 查找时标
+*********************************************************************************/
+INT32S MemFindHistIdxSub(INT16U nPreNum, void* pTime, INT16U *pIdx, INT8U nType)
+{
+	INT16U          nIdx                       	= 0;
+	INT8U          	nTmp[GET_MAX(sizeof(MON_MEM_INFO), sizeof(DAY_MEM_INFO))] 	= {0};
+	INT32U			nMaxNum						= 0;
+	INT8U			nLen						= 0;
+	INT32U			nItemId						= 0;
+
+	if (0 == nType)
+	{
+		nLen = 3;
+		nMaxNum = MAX_REAL_DATA_NUM;
+		nItemId = F1;
+	}
+	else if (1 == nType)
+	{
+		nLen = 3;
+		nMaxNum = MAX_DAY_DATA_NUM;
+		nItemId = F2;
+	}
+	else if (2 == nType)
+	{
+		nLen = 2;
+		nMaxNum = MAX_MON_DATA_NUM;
+		nItemId = F3;
+	}
+	else if (3 == nType)
+	{
+		nLen = 3;
+		nMaxNum = MAX_CRV_DATA_NUM;
+		nItemId = F4;
+	}
+	else if (4 == nType)
+	{
+		nLen = 3;
+		nMaxNum = MAX_RDAY_DATA_NUM;
+		nItemId = F5;
+	}
+	else
+	{
+		return -1;
+	}
+	memset(&nTmp[0], 0, sizeof(nTmp));
+	if (RET_ERR_OK != MemReadDbfExt(MEM_OBJ_X_FLH_DATA, 0, nItemId, &nTmp[0], sizeof(nTmp), NULL))
+    {
+        return -1;
+    }
+	if (0 == nType)
+	{
+		if (nTmp[0] >= MAX_REAL_DATA_NUM)
+		{
+			nTmp[0] = 0;
+			MemWriteDbfExt(MEM_OBJ_X_FLH_DATA, 0, nItemId, &nTmp[0], sizeof(nTmp), NULL);
+		}
+		if (NULL != pIdx)
+		{
+	    	*pIdx = (INT16U)nTmp[0];
+	    }
+		return 0;
+	}
+	if (nPreNum > GET_MIN(nMaxNum, nTmp[1]))
+	{
+		return -2;
+	}
+	nIdx = (nTmp[0] + nMaxNum - nPreNum) % nMaxNum;
+	if (NULL != pTime)
+	{
+	    memcpy(pTime, &nTmp[2 + nIdx * nLen], nLen);
+	}
+	
+	if (NULL != pIdx)
+	{
+    	*pIdx = nIdx;
+    }
+
+	return 0;
+}
+
+
+/********************************************************************************
+* 函数名:MemFindHistIdx
+* 输　入:
+*			void*   				pTime
+*			INT8U					nType				日、月、曲线、抄表日
+* 输　出:
+* 返  回:
+* 功  能: 查找时标的物理下标
+*********************************************************************************/
+static INT32S MemFindHistIdx(void* pTime, INT8U nType)
+{
+	INT32S 				i 					= 0;
+	INT32S 				nNum 				= 0;
+	STD_TIME			sStdTime;
+	pSTD_TIME			pStdTime			= &sStdTime;
+	INT8U*				pTimeTmp			= NULL;
+	INT16U          	nIdx  				= 0;
+	INT8U				nLen				= 0;
+
+	if (NULL == pTime)
+	{
+		return -1;
+	}
+	if (1 == nType)
+	{
+		nLen = 3;
+		pTimeTmp = &pStdTime->nDay;
+		nNum = MAX_DAY_DATA_NUM;
+	}
+	else if (2 == nType)
+	{
+		nLen = 2;
+		pTimeTmp = &pStdTime->nMon;
+		nNum = MAX_MON_DATA_NUM;
+	}
+	else if (3 == nType)
+	{
+		nLen = 3;
+		pTimeTmp = &pStdTime->nDay;
+		nNum = MAX_CRV_DATA_NUM;
+	}
+	else if (4 == nType)
+	{
+		nLen = 3;
+		pTimeTmp = &pStdTime->nDay;
+		nNum = MAX_RDAY_DATA_NUM;
+	}
+	else
+	{
+		return -1;
+	}
+	for (i = 0; i < nNum; i++)
+	{
+		memset(pStdTime, 0, sizeof(STD_TIME));
+		MemFindHistIdxSub(i, pTimeTmp, &nIdx, nType);
+		if (0 == memcmp(pTimeTmp, (INT8U*)pTime, nLen))
+		{
+			return (INT32S)nIdx;
+		}
+	}
+
+	return -1;
+}
+
+/********************************************************************************
+* 函数名:MemFindRealHistIdx
+* 输　入:
+*			void*   				pTime
+* 输　出:
+* 返  回:
+* 功  能: 查找时标的物理下标
+*********************************************************************************/
+INT32S MemFindRealHistIdx(void)
+{
+	INT16U	nIdx = 0;
+	
+	if (MemFindHistIdxSub(0, NULL, &nIdx, 0) < 0)
+	{
+		return 0;
+	}
+	if (nIdx >= MAX_REAL_DATA_NUM)
+	{
+		nIdx = 0;
+	}
+	
+	return (INT32S)nIdx;
+}
+
+
+/********************************************************************************
+* 函数名:MemFindDayHistIdx
+* 输　入:
+*			void*   				pTime
+* 输　出:
+* 返  回:
+* 功  能: 查找时标的物理下标
+*********************************************************************************/
+INT32S MemFindDayHistIdx(void* pTime)
+{
+	return MemFindHistIdx(pTime, 1);
+}
+
+/********************************************************************************
+* 函数名:MemFindMonHistIdx
+* 输　入:
+*			void*   				pTime
+* 输　出:
+* 返  回:
+* 功  能: 查找时标的物理下标
+*********************************************************************************/
+INT32S MemFindMonHistIdx(void* pTime)
+{
+	return MemFindHistIdx(pTime, 2);
+}
+
+/********************************************************************************
+* 函数名:MemFindCrvHistIdx
+* 输　入:
+*			void*   				pTime
+* 输　出:
+* 返  回:
+* 功  能: 查找时标的物理下标
+*********************************************************************************/
+INT32S MemFindCrvHistIdx(void* pTime)
+{
+	return MemFindHistIdx(pTime, 3);
+}
+
+/********************************************************************************
+* 函数名:MemFindRDayHistIdx
+* 输　入:
+*			void*   				pTime
+* 输　出:
+* 返  回:
+* 功  能: 查找时标的物理下标
+*********************************************************************************/
+INT32S MemFindRDayHistIdx(void* pTime)
+{
+	return MemFindHistIdx(pTime, 4);
+}
+
+
+#if 0
+#endif
+/**************************************************************************************************
+                                          对外接口函数
+***************************************************************************************************/
+/********************************************************************************
+* 函数名:MemReadCommPrm
+* 输　入:
+* 输　出:
+* 返  回:返回具体读出的长度值，读取异常返回-1
+* 功  能:读取通信参数
+*********************************************************************************/
+INT32S MemReadCommPrm(INT32U nFn, void *pBuf, INT32U nLen)
+{
+	INT32S 	nRet 		= 0;
+	INT32U	nRetLen 	= 0;
+	
+    nRet = MemReadDbfExt(MEM_OBJ_PRM_TERM_COMM, 0, nFn, pBuf, nLen, &nRetLen);
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+	return (INT32S)nRetLen;
+}
+
+
+/********************************************************************************
+* 函数名:MemWriteCommPrm
+* 输　入:
+* 输　出:
+* 返  回:写成功返回0，失败返回-1
+* 功  能:设置通信参数
+*********************************************************************************/
+INT32S MemWriteCommPrm(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbfExt(MEM_OBJ_PRM_TERM_COMM, 0, nFn, pBuf, nLen, NULL);
+}
+
+
+/********************************************************************************
+* 函数名:MemReadMeterPrm
+* 输　入:
+*					INT16U nSeq						测量点序号  (从1开始)
+* 输　出:
+* 返  回:
+* 功  能:读取电表参数
+*********************************************************************************/
+INT32S MemReadMeterPrm(INT16U nSeq, INT32U nFn, void *pBuf, INT32U nLen)
+{
+	INT16U 		nSeqTmp = 0;
+	
+	if (F10 == nFn)
+	{
+		if (!ChkRange(nSeq, 1, MAX_METER_NUM))
+		{
+			return -1;
+		}
+		nSeqTmp = nSeq - 1;
+	}
+	else if (F25 == nFn)
+	{
+		if ((nSeqTmp = GetSeqFromMp(nSeq)) <= 0)
+		{
+			return -1;
+		}
+		nSeqTmp--;				// 从0开始
+	}
+	
+	return MemReadDbfExt(MEM_OBJ_PRM_METER, nSeqTmp, nFn, pBuf, nLen, NULL);
+}
+
+/********************************************************************************
+* 函数名:MemWriteMeterPrm
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:设置电表参数
+*********************************************************************************/
+INT32S MemWriteMeterPrm(INT16U nSeq, INT32U nFn, void *pBuf, INT32U nLen)
+{
+	INT16U 		nSeqTmp = 0;
+	
+	if (F10 == nFn)
+	{
+		if (!ChkRange(nSeq, 1, MAX_METER_NUM))
+		{
+			return -1;
+		}
+		nSeqTmp = nSeq - 1;
+	}
+	else if (F25 == nFn)
+	{
+		if ((nSeqTmp = GetSeqFromMp(nSeq)) <= 0)
+		{
+			return -1;
+		}
+		nSeqTmp--;				// 从0开始
+	}
+    return MemWriteDbfExt(MEM_OBJ_PRM_METER, nSeqTmp, nFn, pBuf, nLen, NULL);
+}
+
+/********************************************************************************
+* 函数名:MemReadAcCalPrm
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取校表参数
+*********************************************************************************/
+INT32S MemReadAcCalPrm(INT32U nFn, void *pBuf, INT32U nLen)
+{
+	INT32S 	nRet 		= 0;
+	INT32U	nRetLen 	= 0;
+	
+    nRet = MemReadDbfExt(MEM_OBJ_PRM_AC_CAL, 0, nFn, pBuf, nLen, &nRetLen);
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+	return (INT32S)nRetLen;
+}
+
+/********************************************************************************
+* 函数名:MemWriteAcCalPrm
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:设置校表参数
+*********************************************************************************/
+INT32S MemWriteAcCalPrm(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbfExt(MEM_OBJ_PRM_AC_CAL, 0, nFn, pBuf, nLen, NULL);
+}
+
+/********************************************************************************
+* 函数名:MemReadAcPrm
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取交采参数
+*********************************************************************************/
+INT32S MemReadAcPrm(INT32U nFn, void *pBuf, INT32U nLen)
+{
+	INT32S 	nRet 		= 0;
+	INT32U	nRetLen 	= 0;
+	
+    nRet = MemReadDbfExt(MEM_OBJ_PRM_AC, 0, nFn, pBuf, nLen, &nRetLen);
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+	return (INT32S)nRetLen;
+}
+
+/********************************************************************************
+* 函数名:MemWriteAcPrm
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:设置交采参数
+*********************************************************************************/
+INT32S MemWriteAcPrm(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbfExt(MEM_OBJ_PRM_AC, 0, nFn, pBuf, nLen, NULL);
+}
+
+
+/********************************************************************************
+* 函数名:MemReadGrpPrm
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读总加组参数
+*********************************************************************************/
+INT32S MemReadGrpPrm(INT32U nFn, INT32U nItmId, void *pBuf, INT32U nLen)
+{
+    INT32S 	nRet 		= 0;
+	INT32U	nRetLen 	= 0;
+	
+    nRet = MemReadDbf(MEM_OBJ_PRM_GRP, 0, nFn, nItmId, 0, 0, 0, 0, 0,pBuf, nLen, &nRetLen);
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+	return (INT32S)nRetLen;
+}
+
+/********************************************************************************
+* 函数名:MemWriteGrpPrm
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:设置总加组参数
+*********************************************************************************/
+INT32S MemWriteGrpPrm(INT32U nFn, INT32U nItmId, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbf(MEM_OBJ_PRM_GRP, 0, nFn, nItmId, 0, 0, 0, 0, 0, pBuf, nLen, NULL);
+}
+
+
+/********************************************************************************
+* 函数名:MemReadCtrlPrm
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取控制参数
+*********************************************************************************/
+INT32S MemReadCtrlPrm(INT32U nFn, INT32U nItmId, void *pBuf, INT32U nLen)
+{
+    INT32S 	nRet 		= 0;
+	INT32U	nRetLen 	= 0;
+    
+    nRet = MemReadDbf(MEM_OBJ_PRM_CTRL, 0, nFn, nItmId, 0, 0, 0, 0, 0,pBuf, nLen, &nRetLen);
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+	return (INT32S)nRetLen;
+}
+
+/********************************************************************************
+* 函数名:MemWriteCtrlPrm
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:设置控制参数
+*********************************************************************************/
+INT32S MemWriteCtrlPrm(INT32U nFn, INT32U nItmId, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbf(MEM_OBJ_PRM_CTRL, 0, nFn, nItmId, 0, 0, 0, 0, 0, pBuf, nLen, NULL);
+}
+
+/********************************************************************************
+* 函数名:MemReadRdPrm
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取抄表参数
+*********************************************************************************/
+INT32S MemReadRdPrm(INT32U nFn, INT32U nItmId, void *pBuf, INT32U nLen)
+{
+    INT32S 	nRet 		= 0;
+	INT32U	nRetLen 	= 0;
+    
+    nRet = MemReadDbf(MEM_OBJ_PRM_RDMETER, 0, nFn, nItmId, 0, 0, 0, 0, 0,pBuf, nLen, &nRetLen);
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+	return (INT32S)nRetLen;
+}
+
+/********************************************************************************
+* 函数名:MemWriteRdPrm
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:设置抄表参数
+*********************************************************************************/
+INT32S MemWriteRdPrm(INT32U nFn, INT32U nItmId, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbf(MEM_OBJ_PRM_RDMETER, 0, nFn, nItmId, 0, 0, 0, 0, 0, pBuf, nLen, NULL);
+}
+
+
+/********************************************************************************
+* 函数名:MemReadOtherPrm
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取其他参数
+*********************************************************************************/
+INT32S MemReadOtherPrm(INT32U nFn, void *pBuf, INT32U nLen)
+{
+	INT32S 	nRet 		= 0;
+	INT32U	nRetLen 	= 0;
+	
+    nRet = MemReadDbfExt(MEM_OBJ_PRM_OTHER, 0, nFn, pBuf, nLen, &nRetLen);
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+	return (INT32S)nRetLen;
+}
+
+
+/********************************************************************************
+* 函数名:MemWriteOtherPrm
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:设置其他参数
+*********************************************************************************/
+INT32S MemWriteOtherPrm(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbfExt(MEM_OBJ_PRM_OTHER, 0, nFn, pBuf, nLen, NULL);
+}
+
+
+/********************************************************************************
+* 函数名:MemReadFlhXmpData
+* 输　入:
+*					INT16U nBlkIdx						某个标识Fn的第几个块
+* 输　出:
+* 返  回:
+* 功  能:读取交互数据FLASH
+*********************************************************************************/
+INT32S MemReadFlhXmpData(INT32U nFn, INT16U nBlkIdx, void *pBuf, INT32U nLen)
+{
+    return MemReadDbf(MEM_OBJ_X_FLH_DATA, 0, nFn, nBlkIdx, 0, 0, 0, 0, 0, pBuf, nLen, NULL);
+}
+
+/********************************************************************************
+* 函数名:MemWriteFlhXmpData
+* 输　入:
+*					INT16U nBlkIdx						某个标识Fn的第几个块
+* 输　出:
+* 返  回:
+* 功  能:写交互数据FLASH
+*********************************************************************************/
+INT32S MemWriteFlhXmpData(INT32U nFn, INT16U nBlkIdx, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbf(MEM_OBJ_X_FLH_DATA, 0, nFn, nBlkIdx, 0, 0, 0, 0, 0, pBuf, nLen, NULL);
+}
+
+
+/********************************************************************************
+* 函数名:MemReadFramXmpData
+* 输　入:
+*					INT16U nBlkIdx						某个标识Fn的第几个块
+* 输　出:
+* 返  回:
+* 功  能:读取交互数据FRAM
+*********************************************************************************/
+INT32S MemReadFramXmpData(INT32U nFn, INT16U nBlkIdx, void *pBuf, INT32U nLen)
+{
+    return MemReadDbf(MEM_OBJ_X_FRAM_DATA, 0, nFn, nBlkIdx, 0, 0, 0, 0, 0, pBuf, nLen, NULL);
+}
+
+/********************************************************************************
+* 函数名:MemWriteFramXmpData
+* 输　入:
+*					INT16U nBlkIdx						某个标识Fn的第几个块
+* 输　出:
+* 返  回:
+* 功  能:写交互数据FRAM
+*********************************************************************************/
+INT32S MemWriteFramXmpData(INT32U nFn, INT16U nBlkIdx, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbf(MEM_OBJ_X_FRAM_DATA, 0, nFn, nBlkIdx, 0, 0, 0, 0, 0, pBuf, nLen, NULL);
+}
+
+/********************************************************************************
+* 函数名:MemReadRamXmpData
+* 输　入:
+*					
+* 输　出:
+* 返  回:
+* 功  能:读取交互数据RAM
+*********************************************************************************/
+INT32S MemReadRamXmpData(INT32U nFn, INT16U nBlkIdx, void *pBuf, INT32U nLen)
+{
+    return MemReadDbf(MEM_OBJ_X_RAM_DATA, 0, nFn, nBlkIdx, 0, 0, 0, 0, 0, pBuf, nLen, NULL);
+}
+
+/********************************************************************************
+* 函数名:MemWriteRamXmpData
+* 输　入:
+*					
+* 输　出:
+* 返  回:
+* 功  能:写交互数据RAM
+*********************************************************************************/
+INT32S MemWriteRamXmpData(INT32U nFn, INT16U nBlkIdx, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbf(MEM_OBJ_X_RAM_DATA, 0, nFn, nBlkIdx, 0, 0, 0, 0, 0, pBuf, nLen, NULL);
+}
+
+
+/********************************************************************************
+* 函数名:MemRealDayData
+* 输　入:
+* 输　出:
+* 返  回:正确0，错误-1
+* 功  能:读取实时数据
+*********************************************************************************/
+INT32S MemReadRealData(INT16U nMp, INT32U nFn, void *pBuf, INT32U nLen)
+{
+	INT8U		nHistIdx	= 0;
+	INT32U		nHistSize	= 0;
+	INT16U		nSeq		= 0;
+
+	if ((nSeq = GetSeqFromMp(nMp)) <= 0)
+	{
+		return -1;
+	}
+	nSeq--;				// 从0开始
+
+	//全局第几个实时数据块 
+	nHistIdx = MemFindRealHistIdx();
+	nHistSize = sizeof(MEM_MP_REAL_DATA) * MAX_METER_NUM;
+	
+	return MemReadHistDataExt(MEM_OBJ_REAL_DATA, nSeq, nFn, nHistSize, nHistIdx, 0, 0, pBuf, nLen, NULL);
+}
+/********************************************************************************
+* 函数名:MemWriteRealData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:写实时数据
+*********************************************************************************/
+INT32S MemWriteRealData(INT16U nMp, INT32U nFn, void *pBuf, INT32U nLen)
+{
+	INT8U		nHistIdx	= 0;
+	INT32U		nHistSize	= 0;
+	INT16U		nSeq		= 0;
+
+	if ((nSeq = GetSeqFromMp(nMp)) <= 0)
+	{
+		return -1;
+	}
+	nSeq--;				// 从0开始
+
+	nHistIdx = MemFindRealHistIdx();
+	nHistSize = sizeof(MEM_MP_REAL_DATA) * MAX_METER_NUM;
+
+	return MemWriteHistDataExt(MEM_OBJ_REAL_DATA, nSeq, nFn, nHistSize, nHistIdx, 0, 0, pBuf, nLen, NULL);
+
+}
+
+
+/********************************************************************************
+* 函数名:MemReadDayData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取历史数据
+*********************************************************************************/
+INT32S MemReadDayData(INT16U nMp, INT32U nFn, void* pTime, void *pBuf, INT32U nLen)
+{
+	INT32S		nHistIdx	= 0;
+	INT32U		nHistSize	= 0;
+	INT16U		nSeq		= 0;
+
+	if ((nSeq = GetSeqFromMp(nMp)) <= 0)
+	{
+		return -1;
+	}
+	nSeq--;														// 从0开始
+	
+	nHistSize = sizeof(MEM_MP_DAY_DATA) * MAX_METER_NUM;
+	nHistIdx = MemFindDayHistIdx(pTime);
+	if (nHistIdx < 0)
+	{
+		return -1;
+	}
+    
+	return MemReadHistDataExt(MEM_OBJ_DAY_DATA, nSeq, nFn, nHistSize, nHistIdx, 0, 0, pBuf, nLen, NULL);
+}
+/********************************************************************************
+* 函数名:MemWriteDayData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:写历史数据
+*********************************************************************************/
+INT32S MemWriteDayData(INT16U nMp, INT32U nFn, INT16U nPre, void *pBuf, INT32U nLen)
+{
+	INT16U		nHistIdx	= 0;
+	INT32U		nHistSize	= 0;
+	INT16U		nSeq		= 0;
+
+	if ((nSeq = GetSeqFromMp(nMp)) <= 0)
+	{
+		return -1;
+	}
+	nSeq--;				// 从0开始
+	
+	nHistSize = sizeof(MEM_MP_DAY_DATA) * MAX_METER_NUM;
+	if (MemFindHistIdxSub(nPre, NULL, &nHistIdx, 1) < 0)
+	{
+		return -1;
+	}
+    
+	return MemWriteHistDataExt(MEM_OBJ_DAY_DATA, nSeq, nFn, nHistSize, nHistIdx, 0, 0, pBuf, nLen, NULL);
+}
+
+/********************************************************************************
+* 函数名:MemReadMonData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取历史数据
+*********************************************************************************/
+INT32S MemReadMonData(INT16U nMp, INT32U nFn, void* pTime, void *pBuf, INT32U nLen)
+{
+	INT32S		nHistIdx	= 0;
+	INT32U		nHistSize	= 0;
+	INT16U		nSeq		= 0;
+
+	if ((nSeq = GetSeqFromMp(nMp)) <= 0)
+	{
+		return -1;
+	}
+	nSeq--;				// 从0开始
+	
+	nHistSize = sizeof(MEM_MP_MON_DATA) * MAX_METER_NUM;
+	nHistIdx = MemFindMonHistIdx(pTime);
+	if (nHistIdx < 0)
+	{
+		return -1;
+	}
+	
+	return MemReadHistDataExt(MEM_OBJ_MON_DATA, nSeq, nFn, nHistSize, nHistIdx, 0, 0, pBuf, nLen, NULL);
+}
+
+/********************************************************************************
+* 函数名:MemWriteMonData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:写历史数据
+*********************************************************************************/
+INT32S MemWriteMonData(INT16U nMp, INT32U nFn, INT16U nPre, void *pBuf, INT32U nLen)
+{
+	INT16U		nHistIdx	= 0;
+	INT32U		nHistSize	= 0;
+	INT16U		nSeq		= 0;
+
+	if ((nSeq = GetSeqFromMp(nMp)) <= 0)
+	{
+		return -1;
+	}
+	nSeq--;				// 从0开始
+	
+	nHistSize = sizeof(MEM_MP_MON_DATA) * MAX_METER_NUM;
+	if (MemFindHistIdxSub(nPre, NULL, &nHistIdx, 2) < 0)
+	{
+		return -1;
+	}
+    
+	return MemWriteHistDataExt(MEM_OBJ_MON_DATA, nSeq, nFn, nHistSize, nHistIdx, 0, 0, pBuf, nLen, NULL);
+}
+
+
+/********************************************************************************
+* 函数名:MemReadCrvData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取历史数据
+*********************************************************************************/
+INT32S MemReadCrvData(INT16U nMp, INT32U nFn, void* pTime, INT16U nCrvIdx, void *pBuf, INT32U nLen)
+{
+	INT32S		nHistIdx	= 0;
+	INT32U		nHistSize	= 0;
+	INT32U		nPointSize	= 0;
+	INT16U		nSeq		= 0;
+	INT16U		nImMeterSeq = 0;
+
+	if ((nSeq = GetSeqFromMp(nMp)) <= 0)
+	{
+		return -1;
+	}
+	if ((nImMeterSeq = GetImSeqFromSeq(nSeq)) <= 0)
+	{
+		return -1;
+	}
+	nImMeterSeq--;
+	
+	nHistSize = sizeof(MEM_MP_CRV_DATA) * MAX_IM_METER_NUM * MAX_CRV_POINT_NUM;
+	nHistIdx = MemFindCrvHistIdx(pTime);
+	if (nHistIdx < 0)
+	{
+		return -1;
+	}
+    
+	return MemReadHistDataExt(MEM_OBJ_CRV_DATA, nImMeterSeq, nFn, nHistSize, nHistIdx, nPointSize, nCrvIdx, pBuf, nLen, NULL);
+}
+
+/********************************************************************************
+* 函数名:MemWriteCrvData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:写历史数据
+*********************************************************************************/
+INT32S MemWriteCrvData(INT16U nMp, INT32U nFn, INT16U nPre, INT16U nCrvIdx, void *pBuf, INT32U nLen)
+{
+	INT16U		nHistIdx	= 0;
+	INT32U		nHistSize	= 0;
+	INT32U		nPointSize	= 0;
+	INT16U		nSeq		= 0;
+	INT16U		nImMeterSeq = 0;
+
+	if ((nSeq = GetSeqFromMp(nMp)) <= 0)
+	{
+		return -1;
+	}
+	if ((nImMeterSeq = GetImSeqFromSeq(nSeq)) <= 0)
+	{
+		return -1;
+	}
+	nImMeterSeq--;			// 从0开始
+	
+	nHistSize = sizeof(MEM_MP_CRV_DATA) * MAX_IM_METER_NUM * MAX_CRV_POINT_NUM;
+	if (MemFindHistIdxSub(nPre, NULL, &nHistIdx, 3) < 0)
+	{
+		return -1;
+	}
+    
+	return MemWriteHistDataExt(MEM_OBJ_CRV_DATA, nImMeterSeq, nFn, nHistSize, nHistIdx, nPointSize, nCrvIdx, pBuf, nLen, NULL);
+}
+
+
+/********************************************************************************
+* 函数名:MemReadRDayData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取历史数据
+*********************************************************************************/
+INT32S MemReadRDayData(INT16U nMp, INT32U nFn, void* pTime, void *pBuf, INT32U nLen)
+{
+	INT32S		nHistIdx	= 0;
+	INT32U		nHistSize	= 0;
+	INT16U		nSeq		= 0;
+
+	if ((nSeq = GetSeqFromMp(nMp)) <= 0)
+	{
+		return -1;
+	}
+	nSeq--;				// 从0开始
+	
+	nHistSize = sizeof(MEM_MP_RDAY_DATA) * MAX_METER_NUM;
+	nHistIdx = MemFindRDayHistIdx(pTime);
+	if (nHistIdx < 0)
+	{
+		return -1;
+	}
+	
+	return MemWriteHistDataExt(MEM_OBJ_RDAY_DATA, nSeq, nFn, nHistSize, nHistIdx, 0, 0, pBuf, nLen, NULL);
+}
+
+/********************************************************************************
+* 函数名:MemWriteRDayData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取历史数据
+*********************************************************************************/
+INT32S MemWriteRDayData(INT16U nMp, INT32U nFn, INT16U nPre, void *pBuf, INT32U nLen)
+{
+	INT16U		nHistIdx	= 0;
+	INT32U		nHistSize	= 0;
+	INT16U		nSeq		= 0;
+
+	if ((nSeq = GetSeqFromMp(nMp)) <= 0)
+	{
+		return -1;
+	}
+	nSeq--;				// 从0开始
+	
+	nHistSize = sizeof(MEM_MP_RDAY_DATA) * MAX_METER_NUM;
+	if (MemFindHistIdxSub(nPre, NULL, &nHistIdx, 4) < 0)
+	{
+		return -1;
+	}
+	
+	return MemWriteHistDataExt(MEM_OBJ_RDAY_DATA, nSeq, nFn, nHistSize, nHistIdx, 0, 0, pBuf, nLen, NULL);
+}
+
+//交采
+/********************************************************************************
+* 函数名:MemReadAcInstData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取交采瞬时数据
+*********************************************************************************/
+INT32S MemReadAcInstData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    INT32S 	nRet 		= 0;
+	INT32U	nRetLen 	= 0;
+	
+    nRet = MemReadDbfExt(MEM_OBJ_AC_INSTANT, 0, nFn, pBuf, nLen, &nRetLen);
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+	return (INT32S)nRetLen;
+}
+
+/********************************************************************************
+* 函数名:MemWriteAcInstData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:写交采瞬时数据
+*********************************************************************************/
+INT32S MemWriteAcInstData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbfExt(MEM_OBJ_AC_INSTANT, 0, nFn, pBuf, nLen, NULL);
+}
+
+/********************************************************************************
+* 函数名:MemAcRealData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取交采实时数据
+*********************************************************************************/
+INT32S MemReadAcRealData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    INT32S 	nRet 		= 0;
+	INT32U	nRetLen 	= 0;
+	
+    nRet = MemReadDbfExt(MEM_OBJ_AC_REAL, 0, nFn, pBuf, nLen, &nRetLen);
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+	return (INT32S)nRetLen;
+}
+
+/********************************************************************************
+* 函数名:MemWriteAcRealData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:写交采实时数据
+*********************************************************************************/
+INT32S MemWriteAcRealData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbfExt(MEM_OBJ_AC_REAL, 0, nFn, pBuf, nLen, NULL);
+}
+
+/********************************************************************************
+* 函数名:MemReadAcRealBackData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取交采实时备份数据
+*********************************************************************************/
+INT32S MemReadAcRealBackData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    INT32S 	nRet 		= 0;
+	INT32U	nRetLen 	= 0;
+	
+    nRet = MemReadDbfExt(MEM_OBJ_AC_BACK, 0, nFn, pBuf, nLen, &nRetLen);
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+	return (INT32S)nRetLen;
+}
+
+/********************************************************************************
+* 函数名:MemWriteAcRealBackData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:写交采实时备份数据
+*********************************************************************************/
+INT32S MemWriteAcRealBackData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbfExt(MEM_OBJ_AC_BACK, 0, nFn, pBuf, nLen, NULL);
+}
+
+#if 0
+/********************************************************************************
+* 函数名:MemReadAcDayData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取交采日数据
+*********************************************************************************/
+INT32S MemReadAcDayData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    INT32S 	nRet 		= 0;
+	INT32U	nRetLen 	= 0;
+	
+    nRet = MemReadDbfExt(MEM_OBJ_AC_DAY, 0, nFn, pBuf, nLen, &nRetLen);
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+	return (INT32S)nRetLen;
+}
+
+/********************************************************************************
+* 函数名:MemWriteAcDayData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:写交采日冻结数据
+*********************************************************************************/
+INT32S MemWriteAcDayData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbfExt(MEM_OBJ_AC_DAY, 0, nFn, pBuf, nLen, NULL);
+}
+
+/********************************************************************************
+* 函数名:MemReadAcRdDayData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取交采抄表日数据
+*********************************************************************************/
+INT32S MemReadAcRdDayData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    INT32S 	nRet 		= 0;
+	INT32U	nRetLen 	= 0;
+	
+    nRet = MemReadDbfExt(MEM_OBJ_AC_RDAY, 0, nFn, pBuf, nLen, &nRetLen);
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+	return (INT32S)nRetLen;
+}
+
+/********************************************************************************
+* 函数名:MemWriteAcRdDayData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:写交采抄表日冻结数据
+*********************************************************************************/
+INT32S MemWriteAcRdDayData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbfExt(MEM_OBJ_AC_RDAY, 0, nFn, pBuf, nLen, NULL);
+}
+
+
+/********************************************************************************
+* 函数名:MemReadAcSSDJData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取交采瞬时冻结
+*********************************************************************************/
+INT32S MemReadAcSSDJData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    INT32S 	nRet 		= 0;
+	INT32U	nRetLen 	= 0;
+	
+    nRet = MemReadDbfExt(MEM_OBJ_AC_SSDJ, 0, nFn, pBuf, nLen, &nRetLen);
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+	return (INT32S)nRetLen;
+}
+
+/********************************************************************************
+* 函数名:MemWriteAcSSDJData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:写交采瞬时冻结数据
+*********************************************************************************/
+INT32S MemWriteAcSSDJData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbfExt(MEM_OBJ_AC_SSDJ, 0, nFn, pBuf, nLen, NULL);
+}
+
+/********************************************************************************
+* 函数名:MemReadAcDSDJData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取交采定时冻结
+*********************************************************************************/
+INT32S MemReadAcDSDJData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    INT32S 	nRet 		= 0;
+	INT32U	nRetLen 	= 0;
+	
+    nRet = MemReadDbfExt(MEM_OBJ_AC_DSDJ, 0, nFn, pBuf, nLen, &nRetLen);
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+	return (INT32S)nRetLen;
+}
+
+/********************************************************************************
+* 函数名:MemWriteAcDSDJData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:写交采定时冻结数据
+*********************************************************************************/
+INT32S MemWriteAcDSDJData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbfExt(MEM_OBJ_AC_DSDJ, 0, nFn, pBuf, nLen, NULL);
+}
+
+/********************************************************************************
+* 函数名:MemReadAcSQDJData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取交采时区冻结
+*********************************************************************************/
+INT32S MemReadAcSQDJData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    INT32S 	nRet 		= 0;
+	INT32U	nRetLen 	= 0;
+	
+    nRet = MemReadDbfExt(MEM_OBJ_AC_SQDJ, 0, nFn, pBuf, nLen, &nRetLen);
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+	return (INT32S)nRetLen;
+}
+
+/********************************************************************************
+* 函数名:MemWriteAcSQDJData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:写交采时区冻结数据
+*********************************************************************************/
+INT32S MemWriteAcSQDJData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbfExt(MEM_OBJ_AC_SQDJ, 0, nFn, pBuf, nLen, NULL);
+}
+
+/********************************************************************************
+* 函数名:MemReadAcSDDJData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取交采时段冻结
+*********************************************************************************/
+INT32S MemReadAcSDDJData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    INT32S 	nRet 		= 0;
+	INT32U	nRetLen 	= 0;
+	
+    nRet = MemReadDbfExt(MEM_OBJ_AC_SDDJ, 0, nFn, pBuf, nLen, &nRetLen);
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+	return (INT32S)nRetLen;
+}
+
+/********************************************************************************
+* 函数名:MemWriteAcSDDJData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:写交采时段冻结数据
+*********************************************************************************/
+INT32S MemWriteAcSDDJData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbfExt(MEM_OBJ_AC_SDDJ, 0, nFn, pBuf, nLen, NULL);
+}
+#endif
+
+
+
+
+/********************************************************************************
+* 函数名:MemReadAcXBackData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取交采交互数据铁电备份
+*********************************************************************************/
+INT32S MemReadAcXBackData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    INT32S 	nRet 		= 0;
+	INT32U	nRetLen 	= 0;
+	
+    nRet = MemReadDbfExt(MEM_OBJ_AC_X_BACK, 0, nFn, pBuf, nLen, &nRetLen);
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+	return (INT32S)nRetLen;
+}
+
+/********************************************************************************
+* 函数名:MemWriteAcXBackData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:写交采交互数据铁电备份
+*********************************************************************************/
+INT32S MemWriteAcXBackData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbfExt(MEM_OBJ_AC_X_BACK, 0, nFn, pBuf, nLen, NULL);
+}
+
+
+/********************************************************************************
+* 函数名:MemReadAcXFlhBackData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取交采交互数据FLH备份
+*********************************************************************************/
+INT32S MemReadAcXFlhBackData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    INT32S 	nRet 		= 0;
+	INT32U	nRetLen 	= 0;
+	
+    nRet = MemReadDbfExt(MEM_OBJ_AC_X_BACK_FLH, 0, nFn, pBuf, nLen, &nRetLen);
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+	return (INT32S)nRetLen;
+}
+
+/********************************************************************************
+* 函数名:MemWriteAcXFlhBackData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:写交采交互数据FLh备份
+*********************************************************************************/
+INT32S MemWriteAcXFlhBackData(INT32U nFn, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbfExt(MEM_OBJ_AC_X_BACK_FLH, 0, nFn, pBuf, nLen, NULL);
+}
+
+/********************************************************************************
+* 函数名:MemReadAcEvtData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取交采事件数据
+*********************************************************************************/
+INT32S MemReadAcEvtData(INT32U nFn, INT32U nItmId, void *pBuf, INT32U nLen)
+{
+    INT32S 	nRet 		= 0;
+	INT32U	nRetLen 	= 0;
+    
+    nRet = MemReadDbf(MEM_OBJ_AC_EVT, 0, nFn, nItmId, 0, 0, 0, 0, 0,pBuf, nLen, &nRetLen);
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+	return (INT32S)nRetLen;
+}
+
+/********************************************************************************
+* 函数名:MemWriteAcEvtData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:写交采事件数据
+*********************************************************************************/
+INT32S MemWriteAcEvtData(INT32U nFn, INT32U nItmId, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbf(MEM_OBJ_AC_EVT, 0, nFn, nItmId, 0, 0, 0, 0, 0, pBuf, nLen, NULL);
+}
+
+
+/********************************************************************************
+* 函数名:MemReadAcHistData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:读取交采历史数据
+*********************************************************************************/
+INT32S MemReadAcHistData(INT32U nFn, INT32U nItmId, void *pBuf, INT32U nLen)
+{
+    INT32S 	nRet 		= 0;
+	INT32U	nRetLen 	= 0;
+    
+    nRet = MemReadDbf(MEM_OBJ_AC_HIST_DATA, 0, nFn, nItmId, 0, 0, 0, 0, 0,pBuf, nLen, &nRetLen);
+	if (nRet < 0)
+	{
+		return nRet;
+	}
+	return (INT32S)nRetLen;
+}
+
+/********************************************************************************
+* 函数名:MemWriteAcHistData
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能:写交采历史数据
+*********************************************************************************/
+INT32S MemWriteAcHistData(INT32U nFn, INT32U nItmId, void *pBuf, INT32U nLen)
+{
+    return MemWriteDbf(MEM_OBJ_AC_HIST_DATA, 0, nFn, nItmId, 0, 0, 0, 0, 0, pBuf, nLen, NULL);
+}
+
+
+/********************************************************************************
+* 函数名:MemWriteAcEvtProc
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能: 交采事件存储处理
+*********************************************************************************/
+INT32S  MemWriteAcEvtProc(INT32U nFn, void *pBuf, INT32U nLen, INT8U nMode)
+{
+    INT16U      nPre = 1;
+    INT16U      nIdx = 0;
+    INT32S      nRet    = 0;
+    
+    if (NULL == pBuf)
+	{
+		return RET_ERR_POINT;
+	}
+    if (nMode)
+    {
+        nPre = 0;
+    }
+    //1.获取时间存储信息
+    if (RET_ERR_OK != (nRet = MemFindACEvtDataIdx(nFn, nPre, &nIdx)))
+    {
+        return nRet;
+    }
+    //2.存储
+    MemWriteAcEvtData(nFn, nIdx, pBuf, nLen);
+  
+    //3.更新存储信息
+    MemUpdateEventMemInfo(nFn, nMode);
+    
+    return RET_ERR_OK;
+}
+
+/********************************************************************************
+* 函数名:MemReadAcEvtProc
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能: 交采事件读取处理
+*********************************************************************************/
+INT32S  MemReadAcEvtProc(INT32U nFn, INT16U nPreNum, void *pBuf, INT32U nLen)
+{
+    INT16U      nIdx = 0;
+    INT32S      nRet    = 0;
+    
+    //1.获取时间存储信息
+    if (RET_ERR_OK != (nRet = MemFindACEvtDataIdx(nFn, nPreNum, &nIdx)))
+    {
+        return nRet;
+    }
+    
+    //2.读取数据
+    if (MemReadAcEvtData(nFn, nIdx, pBuf, nLen) < 0)
+    {
+        return -1;
+    }
+    
+    return RET_ERR_OK;
+}
+
+
+/********************************************************************************
+* 函数名:
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能: 查找AC事件时标
+*********************************************************************************/
+INT8S MemFindACEvtDataIdx(INT8U Fn, INT16U nPreNum, INT16U *pIdx)
+{
+    INT16U	nIdx = 0;
+	AC_EVT_MEM_INFO	sMemInfo;
+    
+    if (NULL == pIdx)
+	{
+		return RET_ERR_POINT;
+	}
+    memset(&sMemInfo, 0, sizeof(sMemInfo));
+    MemReadAcXFlhBackData(F8 + Fn, &sMemInfo, sizeof(AC_EVT_MEM_INFO));
+    if (nPreNum > GET_MIN(sMemInfo.nMemNum, MAX_AC_EVT_DATA_NUM))
+    {
+        return RET_ERR_RANG;
+    }
+    nIdx = (sMemInfo.nNext + MAX_AC_EVT_DATA_NUM - nPreNum) % MAX_AC_EVT_DATA_NUM;
+	*pIdx = nIdx;
+    return RET_ERR_OK;
+}
+
+/********************************************************************************
+* 函数名:
+* 输　入: nMode(0:回写模式; 1:续写模式; 其它:续写模式)
+* 输　出:
+* 返  回:
+* 功  能: 更新事件存储信息
+*********************************************************************************/
+INT8S MemUpdateEventMemInfo(INT8U Fn, INT8U nMode)
+{
+	AC_EVT_MEM_INFO	sMemInfo;
+    
+    memset(&sMemInfo, 0, sizeof(sMemInfo));
+    MemReadAcXFlhBackData(F8 + Fn, &sMemInfo, sizeof(AC_EVT_MEM_INFO));
+    if (nMode)  //续写模式
+    {
+        sMemInfo.nNext = (sMemInfo.nNext + 1) % MAX_AC_EVT_DATA_NUM;
+        (sMemInfo.nMemNum < MAX_AC_EVT_DATA_NUM) ? (sMemInfo.nMemNum++) : (sMemInfo.nMemNum = MAX_AC_EVT_DATA_NUM);
+    }
+    MemWriteAcXFlhBackData(F8 + Fn, &sMemInfo, sizeof(AC_EVT_MEM_INFO));
+    return RET_ERR_OK;
+}
+    
+/********************************************************************************
+* 函数名:
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能: AC事件删除接口
+*********************************************************************************/
+INT8S MemDeleteACEvent(INT8U nFn)
+{
+    AC_EVT_MEM_INFO sAcEvtMemInfo;
+    
+    memset(&sAcEvtMemInfo, 0, sizeof(sAcEvtMemInfo));
+    MemWriteAcXFlhBackData(nFn, &sAcEvtMemInfo, sizeof(AC_EVT_MEM_INFO));
+    return RET_ERR_OK;
+}
+
+
+/********************************************************************************
+* 函数名:MemWriteAcHistDataProc
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能: 交采历史数据处理
+*********************************************************************************/
+INT32S  MemWriteAcHistDataProc(INT32U nFn, INT16U nPreNum, void *pBuf, INT32U nLen, INT8U nUpdateFlg)
+{
+    //INT16U      nPre = 0;
+    INT16U      nIdx = 0;
+    
+    if (NULL == pBuf)
+	{
+		return RET_ERR_POINT;
+	}
+    //1.获取时间存储信息
+    if (RET_ERR_OK != MemFindACHistDataIdx(nFn, nPreNum, &nIdx))
+    {
+        return -1;
+    }
+    //2.存储
+    MemWriteAcHistData(nFn, nIdx, pBuf, nLen);
+  
+    //3.更新存储信息
+    MemUpdateHistDataMemInfo(nFn);
+    
+    return RET_ERR_OK;
+}
+
+/********************************************************************************
+* 函数名:MemReadAcHistDataProc
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能: 交采历史数据读取处理
+*********************************************************************************/
+INT32S  MemReadAcHistDataProc(INT32U nFn, INT16U nPreNum, void *pBuf, INT32U nLen)
+{
+    INT16U      nIdx = 0;
+    
+    //1.获取时间存储信息
+    if (RET_ERR_OK != MemFindACHistDataIdx(nFn, nPreNum, &nIdx))
+    {
+        return -1;
+    }
+    
+    //2.读取数据
+    MemReadAcHistData(nFn, nIdx, pBuf, nLen);
+    
+    return RET_ERR_OK;
+}
+
+
+/********************************************************************************
+* 函数名:
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能: 查找AC历史数据时标
+*********************************************************************************/
+INT8S MemFindACHistDataIdx(INT8U Fn, INT16U nPreNum, INT16U *pIdx)
+{
+    INT16U	        nIdx = 0;
+	AC_DAY_MEM_INFO	sMemInfo;
+    
+    if (NULL == pIdx)
+	{
+		return RET_ERR_POINT;
+	}
+    memset(&sMemInfo, 0, sizeof(sMemInfo));
+    MemReadAcXFlhBackData(Fn, &sMemInfo, sizeof(AC_DAY_MEM_INFO));
+    if (nPreNum > GET_MIN(sMemInfo.nMemNum, MAX_AC_DAY_DATA_NUM))
+    {
+        return RET_ERR_RANG;
+    }
+    nIdx = (sMemInfo.nNext + MAX_AC_DAY_DATA_NUM - nPreNum) % MAX_AC_DAY_DATA_NUM;
+	*pIdx = nIdx;
+    return RET_ERR_OK;
+}
+
+
+/********************************************************************************
+* 函数名:MemUpdateHistDataMemInfo
+* 输　入: 
+* 输　出:
+* 返  回:
+* 功  能: 更新历史数据存储信息
+*********************************************************************************/
+INT8S MemUpdateHistDataMemInfo(INT8U Fn)
+{
+	AC_DAY_MEM_INFO	sMemInfo;
+    
+    memset(&sMemInfo, 0, sizeof(sMemInfo));
+    MemReadAcXFlhBackData(Fn, &sMemInfo, sizeof(AC_DAY_MEM_INFO));
+    sMemInfo.nNext = (sMemInfo.nNext + 1) % MAX_AC_DAY_DATA_NUM;
+    (sMemInfo.nMemNum < MAX_AC_DAY_DATA_NUM) ? (sMemInfo.nMemNum++) : (sMemInfo.nMemNum = MAX_AC_DAY_DATA_NUM);
+    MemWriteAcXFlhBackData(Fn, &sMemInfo, sizeof(AC_DAY_MEM_INFO));
+    return RET_ERR_OK;
+}
+
+
+/********************************************************************************
+* 函数名:
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能: AC日数据删除接口
+*********************************************************************************/
+INT8S MemDeleteACDayData(INT8U nFn)
+{
+    AC_DAY_MEM_INFO sAcDayMemInfo;
+    
+    memset(&sAcDayMemInfo, 0, sizeof(sAcDayMemInfo));
+    MemWriteAcXFlhBackData(nFn, &sAcDayMemInfo, sizeof(AC_DAY_MEM_INFO));
+    return RET_ERR_OK;
+}
+
+
+
+
+
+
+
+
+
+
+
+

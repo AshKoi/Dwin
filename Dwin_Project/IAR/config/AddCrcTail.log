@@ -1,0 +1,9 @@
+Param(0) = E:\Fujitsu\zhenghe\MB9BF218S-28\IAR\config\AddCrcTail.exe
+Param(1) = -d
+Param(2) = E:\Fujitsu\zhenghe\MB9BF218S-28\IAR\Debug\Exe\MB9BF218S.bin
+----------------------------------------------
+Processing...
+File name: E:\Fujitsu\zhenghe\MB9BF218S-28\IAR\Debug\Exe\MB9BF218S.bin
+File size: 115160 Bytes
+File crc16: 11EF
+Process ok.

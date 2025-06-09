@@ -1,0 +1,17 @@
+#include <string.h>
+#include "lwip/utility/trace.h"
+#include "lwip/utility/assert.h"
+#include "lwip/web/exec/web_api.h"
+
+#include "lwip/include/lwip/opt.h"
+#include "lwip/include/arch/sys_arch.h"
+#include "lwip/include/arch/lwipopts.h"
+#include "lwip/include/lwip/err.h"
+#include "lwip/include/lwip/api.h"
+#include "lwip/include/lwip/mem.h"
+#include "lwip/include/lwip/memp.h"
+#include "lwip/others/user/sys/sys_config.h"
+#include "lwip/include/lwip/netif.h"
+#include "lwip/include/lwip/tcpip.h"
+#include "emac_api.h"
+#include "lwip/others/AT91/periph/emac/dm9161.h"

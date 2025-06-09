@@ -1,0 +1,428 @@
+/******************************************************************************************************
+* 2013-2014 益邦科技有限公司
+* 文件名: 
+* 创建人: 王一凡
+* 日　期: 2013/09/21
+* 修改人: 
+* 日　期: 
+* 描　述: 
+* 版　本: V1.0
+*****************************************************************************************************/
+#include "FileTrans.h"
+#include "Macro.h"
+#include "Fun.h"
+#include "Gw3761.h"
+#include "SysRes.h"
+#include "Base.h"
+#include "ChkCrc.h"
+#include "FlashFile.h"
+#include "Version.h"
+
+/**************************************************************************************************
+                                           相关函数实现
+***************************************************************************************************/
+/*
+*****************************************************************************
+* 函数名: DownloadStrWr
+* 输　入: 
+
+* 输  出: 
+* 返  回: 
+*		0成功，-1失败
+*		
+*		
+* 功  能: 
+*****************************************************************************
+*/
+INT32S DownloadStrWr(INT8U nFileId, INT8U* pData)
+{
+	INT32U			nOffset			= 0;
+	
+	switch(nFileId)
+	{
+		default:
+			nOffset = STR_OFF(pFRAM_STORE, sUpgrade);//获取基地址
+			break;
+	}
+
+	_API_FRAM_Write(nOffset, pData, sizeof(DOWNLOAD_STR));
+
+	return 0;
+}
+
+/*
+*****************************************************************************
+* 函数名: DownloadStrRd
+* 输　入: 
+
+* 输  出: 
+* 返  回: 
+*		0成功，-1失败
+*		
+*		
+* 功  能: 
+*****************************************************************************
+*/
+INT32S DownloadStrRd(INT8U nFileId, INT8U* pData)
+{
+	INT32U			nOffset			= 0;
+
+	if (NULL == pData)
+	{
+		return -1;
+	}
+	memset(pData, 0, sizeof(DOWNLOAD_STR));
+	switch(nFileId)
+	{
+		default:
+			nOffset = STR_OFF(pFRAM_STORE, sUpgrade);//获取基地址
+			break;
+	}
+
+	_API_FRAM_Read(nOffset, pData, sizeof(DOWNLOAD_STR));
+	
+	return 0;
+}
+
+/****************************************************************************
+* 函数名:GB3761FileTransGetBackLastId
+* 输　入:
+*       bFlg        假直接返回FFFFFFFF
+*       nCurrID     当前帧号
+*       nLastId     上一帧号
+* 输　出:
+* 返  回:
+* 功  能:返回下载的上一帧号
+****************************************************************************/
+static INT32U GB3761FileTransGetBackLastId(BOOLEAN bFlg, INT32U nCurrID, INT32U nLastId)
+{
+	if (!bFlg)
+	{
+		return 0xFFFFFFFF;
+	}
+	if (0 == nCurrID)
+	{
+		return 0xFFFFFFFF;
+	}
+	else
+	{
+		return nLastId;
+	}
+}
+        
+    
+/**************************************************************************************************
+                                           相关函数实现
+***************************************************************************************************/
+/********************************************************************************
+* 函数名: GB3761FileTrans
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能: 文件传输
+*********************************************************************************/
+INT8S GB3761FileTrans(pAPP_COMM pComm)
+{
+	INT16U 		nPn[8];
+	INT16U 		nFn[GB3761_MAX_FN_NUM];
+	INT16U		nPnNum   = 0;
+	INT8U		nFnNum   = 0;
+	INT16U  	nOffset  = 0;
+	pGB3761_FRM_INFO pInfo = NULL;
+
+	if (NULL == pComm)
+    {
+    	return RET_ERR_POINT;
+    }
+
+    pInfo = (pGB3761_FRM_INFO)(pComm->pFrmInfo);
+	while (nOffset + 4 <= pInfo->nRxDataLen)
+	{
+		memset(&nPn[0], 0xFFFF, sizeof(nPn));
+        memset(&nFn[0], 0, sizeof(nFn));
+		if (RET_ERR_OK != GB3761DaDt2PnFn(&pComm->pRxFrmBuf[GB3761_DATA_IDX + nOffset], &nPn[0], &nPnNum, &nFn[0], &nFnNum, &pInfo->bAllMpFlag))  //Dadt转换Pnfn
+		{
+            break;
+        }
+        nOffset += 4;
+        if (RET_ERR_OK != GB3761FileTransProc(pComm, &nPn[0], nPnNum, &nFn[0], nFnNum, &nOffset))
+        {
+            break;
+        }
+	}
+	return RET_ERR_OK;
+}
+
+/********************************************************************************
+* 函数名: GB3761FileTransProc
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能: 文件传输
+*********************************************************************************/
+INT8S GB3761FileTransProc(pAPP_COMM pComm, const INT16U *pPn, INT16U nPnNum, const INT16U *pFn, INT8U nFnNum, INT16U *pOffset)
+{
+	INT16U    	i = 0;
+	INT16U    	j = 0;
+	INT16U		nDataLen = 0;
+	INT8U     	nData[128];
+    INT16U      nMaxDataLen = 0;
+	pGB3761_FRM_INFO pInfo = NULL;
+
+    if (NULL == pComm || NULL == pPn || NULL == pFn || NULL == pOffset)
+    {
+    	return RET_ERR_POINT;
+    }
+
+    pInfo = (pGB3761_FRM_INFO)(pComm->pFrmInfo);
+    nMaxDataLen = pComm->nFrmLen - GB3761_FRM_RES_LEN;
+	for (i = 0; i < nPnNum; i++)
+	{
+		for (j = 0; j < nFnNum; j++)
+		{
+            nDataLen = 0;                               //数据长度清零，每次都清零
+            memset(&nData[0], 0, sizeof(nData));        //清空数据内容
+			nDataLen += GB3761FileTransFnProc(pComm, pPn[i], pFn[j], pOffset, &nData[0], sizeof(nData));
+            if (nDataLen > nMaxDataLen || 0 == nDataLen)   //一个Fn项数据长度超过帧长 丢弃
+            {
+                continue;
+            }
+            /*if ((pInfo->nTxDataLen + nDataLen) > nMaxDataLen)//组帧数据超过帧长 发送
+            {
+                pInfo->bSendFlag = TRUE;
+                if (RET_ERR_OK != GB3761FillTxFrm(pComm))
+                {
+                    return RET_ERR_ERROR;
+                }
+                if (RET_ERR_OK != GB3761SendTxFrm(pComm))
+                {
+                    return RET_ERR_ERROR;
+                }
+                pInfo->nTxDataLen = 0;  //重新组帧
+            }*/
+            pInfo->nTxDataLen += MemCopy(&pComm->pTxFrmBuf[GB3761_DATA_IDX + pInfo->nTxDataLen], &nData[0], nDataLen);
+		}
+	}
+	return RET_ERR_OK;
+}
+
+
+/********************************************************************************
+* 函数名: GB3761FileTransFnProc
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能: 文件传输
+*********************************************************************************/
+INT16U GB3761FileTransFnProc(pAPP_COMM pComm, INT16U nPn, INT16U nFn, INT16U *pOffset, INT8U *pData, INT16U nMaxDataLen)
+{
+    INT16U  nDataLen = 0;
+    pGB3761_FRM_INFO pInfo = NULL;
+
+    if (NULL == pComm || NULL == pOffset || NULL == pData)
+    {
+        return 0;
+    }
+    pInfo = (pGB3761_FRM_INFO)pComm->pFrmInfo;
+    if (RET_ERR_OK != GB3761PnFn2DADT(nPn, nFn, &pData[nDataLen]))
+    {
+        return 0;
+    }
+    nDataLen += 4;
+    switch (nFn) //处理不同Fn项
+    {
+    	case F1:      //F1 远程下载处理过程
+        {
+            nDataLen += GB3761FileTransGWF1(nPn, &pComm->pRxFrmBuf[GB3761_DATA_IDX], pInfo->nRxDataLen, pOffset, &pData[nDataLen], nMaxDataLen);
+            break;
+        }
+        default:
+        {
+        	pInfo->bNoDataFlag = TRUE;
+            break;
+        }
+    }
+	if (nDataLen > 4)
+    {
+    	return nDataLen;
+    }
+    return 0;
+}
+INT8U   		nVersion[4]	= {0};
+//国网远程下载F1处理过程
+INT16U GB3761FileTransGWF1(INT16U nPn, INT8U *pRcv, INT16U nRcvlen, INT16U *pOffset, INT8U *pSnd, INT16U nSndlen)
+{
+    INT16U  		nDataLen    	= 0;
+	INT16U			nIdx			= *pOffset;
+    INT8U   		nFileID     	= 0;                                //文件标识
+    INT8U   		nFileProp   	= 0;                                //文件属性
+    INT16U  		nCRC        	= 0;
+    INT16U  		nTotalNum   	= 0;                                //文件总段数
+    INT16U  		nCurrLen    	= 0;                                //当前长度
+    INT32U  		nCurrID     	= 0;                                //当前标识
+    INT32U  		nBaseAddr   	= 0;                                //升级区基地址
+    INT32U			nOffset			= 0;
+	INT32U			nFileMaxSize	= 0;
+	INT8U			nFlg			= 0;
+	INT32U			nFileMinSize	= 0;
+    BOOLEAN			bFlg			= FALSE;
+    INT8U*			pTmpBuf 		= NULL;
+    //INT8U   		nVersion[4]	= {0};                              //终端版本
+    INT8U   		nVersionTmp[4]	= {0};  
+    DOWNLOAD_STR   	sDownloadStr;
+    INT32U          nIdTmp         = 0;
+    INT16U          nTmpIdx     = 0;
+    INT8U           nFn         = F1;
+
+	if ((NULL == pRcv) || (NULL == pSnd))
+	{
+		return -1;
+	}
+    
+    switch (nFn)
+    {
+        case F1:
+        {
+            //基础配置
+			nFileID = pRcv[nIdx++];
+			switch(nFileID)
+            {
+                default:
+					nOffset = MEM_FLH_UPPROGRAM_ADDR;//获取基地址
+					nFileMaxSize = MEM_FLH_DEBUG_UPDATA_SIZE;
+					nFlg = 1;
+					break;
+            }
+            
+            nFileProp = pRcv[nIdx++];
+			nIdx++;
+            nTotalNum = Buf2INT16U(&pRcv[nIdx]);
+			nIdx += 2;
+            nCurrID   = Buf2Long(&pRcv[nIdx], 4);
+			nIdx += 4;
+            nCurrLen  = Buf2INT16U(&pRcv[nIdx]);
+			nIdx += 2;
+            nTmpIdx = nIdx;
+            nTmpIdx += nCurrLen;
+            *pOffset = nTmpIdx;
+            
+            memset(&sDownloadStr, 0, sizeof(sDownloadStr));
+            DownloadStrRd(nFileID, (INT8U*)&sDownloadStr);
+            
+            if (( nCurrLen + 11 > nRcvlen) || (nCurrID >= nTotalNum) || (TRUE == sDownloadStr.bSucc))
+            {
+                nCurrID = GB3761FileTransGetBackLastId(FALSE, nCurrID, (INT32U)(sDownloadStr.nLastId));
+            	break;
+            }
+            pTmpBuf = &pRcv[nIdx];
+            if (!nFlg)
+			{
+				if (nCurrLen < nFileMinSize)
+				{
+					nCurrID = GB3761FileTransGetBackLastId(FALSE, nCurrID, (INT32U)(sDownloadStr.nLastId));
+                	break;
+				}
+			}
+            nVersionTmp[0] = 'V';
+            memcpy(&nVersionTmp[1], MAIN_VERSION_INFO, 1); //主版本
+            memcpy(&nVersionTmp[2], MIN_VERSION_INFO, 2); //小版本
+            
+            if (0 == nCurrID)                      			//第一帧报文
+            {
+                memset(&nVersion[0], 0, sizeof(nVersion));
+                if (nCurrLen <= GB3761_LEN_FILETRANS_HEAD)//比对版本信息
+                {
+                    nCurrID = GB3761FileTransGetBackLastId(FALSE, nCurrID, (INT32U)(sDownloadStr.nLastId));
+                    break;
+                }
+                sDownloadStr.nLastLen = nCurrLen;
+                memcpy(&nVersion[0], &pTmpBuf[1], sizeof(nVersion));
+            }
+
+            if (nFlg)
+            {
+                if (('V' == nVersion[0]) || ('v' == nVersion[0]))
+                {
+                  
+                }
+                else
+                {
+                    nCurrID = GB3761FileTransGetBackLastId(FALSE, nCurrID, (INT32U)(sDownloadStr.nLastId));
+                    break;
+                }
+                if (0 == memcmp(nVersion, nVersionTmp, sizeof(nVersion)))//比对版本信息
+                {
+                    nCurrID = GB3761FileTransGetBackLastId(FALSE, nCurrID, (INT32U)(sDownloadStr.nLastId));
+                    break;
+                }
+                /*if ((nCurrLen > GB3761_LEN_FILETRANS_HEAD) && (0 != memcmp(nVersion, (char*)"S202", sizeof(nVersion))))//比对版本信息
+                {
+                    
+                }
+                else
+                {
+                    nCurrID = GB3761FileTransGetBackLastId(FALSE, nCurrID, (INT32U)(sDownloadStr.nLastId));
+                    break;
+                }*/
+            }
+            else
+            {
+                bFlg = TRUE;
+                sDownloadStr.nLastLen = GET_MAX(nCurrLen, sDownloadStr.nLastLen);
+            }
+                
+            nBaseAddr = nOffset + sDownloadStr.nLastLen * nCurrID; 
+            if (nBaseAddr - nOffset + nCurrLen > sDownloadStr.nDownSize)
+			{
+				sDownloadStr.nDownSize = nBaseAddr - nOffset + nCurrLen;
+			}
+            if ((nBaseAddr - nOffset + nCurrLen) >= nFileMaxSize)//对下载区进行控制
+            {
+            	nCurrID = GB3761FileTransGetBackLastId(FALSE, nCurrID, (INT32U)(sDownloadStr.nLastId));
+                break;
+            }	
+            nCRC = GetCrc16(&pTmpBuf[0], nCurrLen);	//结算校验
+            if (nCurrLen != _API_FLASH_EraseWrite(&pTmpBuf[0], nBaseAddr, nCurrLen)) //写入升级数据失败
+            {
+                nCurrID = GB3761FileTransGetBackLastId(bFlg, nCurrID, (INT32U)(sDownloadStr.nLastId));
+                break;
+            }
+            memset(&pTmpBuf[0], 0, nCurrLen + 2);
+            //FlashFileRead(SELF_UPDATA_FILE, nBaseAddr, &pTmpBuf[0], nCurrLen);
+            _API_FLASH_Read(&pTmpBuf[0], nBaseAddr, nCurrLen);
+            pTmpBuf[nCurrLen] = LOBYTE(nCRC);
+            pTmpBuf[nCurrLen + 1] = HIBYTE(nCRC);
+            if (!IsCrc16Good(&pTmpBuf[0], nCurrLen + 2))
+            {
+                nCurrID = GB3761FileTransGetBackLastId(bFlg, nCurrID, (INT32U)(sDownloadStr.nLastId));
+                break;
+            }
+            sDownloadStr.nLastId  = nCurrID;
+            nIdTmp = nCurrID;
+            if (0x01 == nFileProp)
+            {
+            	sDownloadStr.bSucc = TRUE;
+                nIdTmp += 0x10000000;
+            }
+            DownloadStrWr(nFileID, (INT8U*)&sDownloadStr);
+            if (!nFlg)
+            {
+	            OSMboxPost(g_pMBox[MBOX_FILE_TRANS_IDX], (void*)(1 + nIdTmp));
+	            OSSemPost(g_pSem[SEM_WAIT_FILE_IDX]);
+            }
+            break;
+        }
+        default:
+    	{
+    		return -1;
+    	}
+    }
+    pSnd[nDataLen++] = (INT8U)nCurrID;
+    pSnd[nDataLen++] = (INT8U)(nCurrID >> 8);
+    pSnd[nDataLen++] = (INT8U)(nCurrID >> 16);
+    pSnd[nDataLen++] = (INT8U)(nCurrID >> 24);
+	return nDataLen;
+}
+
+
+

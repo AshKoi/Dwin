@@ -1,0 +1,1944 @@
+#include "GB698GetRequest.h"
+#include "Gw698.h"
+#include "Gw3761.h"
+#include "MemDrvExt.h"
+#include "Table.h"
+#include "Fun.h"
+#include "Macro.h"
+#include "SysRes.h"
+#include "Base.h"
+#include "ChkCrc.h"
+#include "Reset.h"
+#include "MemData.h"
+#include "SoftTimer.h"
+#include "rmotlink.h"
+#include "MemTbl.h"
+#include "PowerOn.h"
+#include "SecTask.h"
+
+/**************************************************************************************************
+                                           相关函数实现
+***************************************************************************************************/
+/********************************************************************************
+* 函数名: GB698GetRequest
+* 输　入:
+* 输　出:
+* 返  回:
+* 功  能: 参数查询
+*********************************************************************************/
+INT8S GB698GetRequest(pAPP_COMM pComm)
+{
+    INT8U     	        nData[256];
+    INT8U               nDataLen = 0;
+    INT8S               nRet;
+    INT8U               nGetReqLen    = GW698_APDU_LEN1;
+    pGB698_FRM_MAP      pMap        = NULL;
+    pGB698_FRM_INFO     pInfo  = NULL;
+    INT32U              nOffset  = 0;
+    INT8U               nRequestObject = 0;
+    INT8U               i = 0;
+    
+    
+    if (NULL == pComm)
+    {
+    	return RET_ERR_POINT;
+    }
+
+    pInfo = (pGB698_FRM_INFO)(pComm->pFrmInfo); //存放 帧的一些信息
+    pMap    = (pGB698_FRM_MAP)&pComm->pRxFrmBuf[0]; //接受到的帧数据
+    nRequestObject =  pMap->nRequestObject;
+    
+    if( 1 == nRequestObject)
+    {//nRequestObject 读取一个对象 ==1   ： 
+        memcpy(&nData[nOffset], &(pMap->nData[0]), OAD_LEN);//40 00 02 00
+        nOffset += 4;
+        nDataLen = GB698GetRequestMakeFrm(pMap->nData, &nData[nOffset + 1], 0xFFFF, NULL);  //40 00 02 00 nn 1c 07 e4 09 17 0a 21 33
+        if(nDataLen < 2)
+        {
+             nData[nOffset] = 0;                      //DAR     后跟随错误信息
+        }
+        else
+        {
+            nData[nOffset] = 1;    //数据    后跟随Data  40 00 02 00 01 1c 07 e4 09 17 0a 21 33
+        }
+        nOffset ++;
+        nOffset += nDataLen;
+        
+    }
+    else if( 2 == nRequestObject)
+    {
+        nData[0] = pMap->nData[0];
+        nOffset ++; 
+        for(i = 0; i < pMap->nData[0]; i ++)
+        {
+            memcpy(&nData[nOffset], &(pMap->nData[1]) + OAD_LEN*i, OAD_LEN);
+            nOffset += 4;
+            nDataLen = GB698GetRequestMakeFrm(&(pMap->nData[1]) + OAD_LEN*i, &nData[nOffset + 1], 0xFFFF, NULL);
+            if(nDataLen < 2)
+            {
+                 nData[nOffset] = 0;                      //DAR     后跟随错误信息
+            }
+            else
+            {
+                nData[nOffset] = 1;    //数据    后跟随Data
+            }
+            nOffset ++;
+            nOffset += nDataLen;
+        }
+    }
+    else if( 3 == nRequestObject)
+    {
+        memcpy(&nData[nOffset], &(pMap->nData[0]), OAD_LEN);
+        nOffset += 4;
+        nRet = GB698GetRecordResp(pMap->nData, &nData[nOffset], &nDataLen);
+
+        nOffset += nDataLen;
+    }
+    //只将数据部分复制到 TXbuf里
+    pInfo->nTxDataLen += MemCopy(&pComm->pTxFrmBuf[g_nHeadLen + nGetReqLen], &nData[0], nOffset);
+    
+    
+    return RET_ERR_OK;
+}
+                          
+INT8S GB698GetRecordResp(INT8U *pOAD, INT8U *pData, INT8U *pDatalen)
+{
+    INT16U      nOI;
+
+    INT8S       nLen = 0;
+    INT8U       nDatalen = 0;
+    INT8U       nRcsd_Len= 0;
+    INT8U       nROAD_Len= 0;
+    INT8U       nCopyStart = 0;
+    INT8U       nOAD_Arr[15][5] = {0};
+    INT8U       nCsdType = 0;
+    INT8U       nTemp[2] = {0};
+    INT8U*      pRecBuf  = &pOAD[4];
+    MEM_METER_PRM   sMeterPrm;
+    pMEM_METER_PRM  pMeterPrm = &sMeterPrm;
+    INT8U       i = 0;
+    INT8U       nOadLen = 0;
+    INT8U       nRecordLen = 0;
+    INT8U       nTxLen  = 0;
+    INT8U       nErrLen = 0;
+    STD_TIME    sDjTime;
+    pSTD_TIME   pDjTime = &sDjTime;
+    nOI = ((pOAD[0] << 8) | pOAD[1]);
+ 
+    switch (nOI)
+    {
+        case 0x5000:
+        case 0x5004:
+        case 0x5006:
+              if( 1 == pRecBuf[nDatalen ++] )
+              {
+                    nDatalen += 4;      //OAD    数据冻结时间OAD
+                    
+                    if(pRecBuf[nDatalen ++] != e_date_time_s)
+                    {
+                        pData[nTxLen++] = 0;
+                        pData[nTxLen++] = 0;
+                        pData[nTxLen ++] = e_RefuseRW;
+                        *pDatalen = nTxLen;
+                        return 1;
+                    }
+                    nRecordLen = 1;
+                    memcpy(&nTemp[0], &pRecBuf[nDatalen], 2);           
+                    sDjTime.nYear = INT8U_TO_BCD((INT8U)((INT16U)(nTemp[0]) * 256 + (INT16U)nTemp[1] - 2000));
+                    nDatalen += 2;
+                    sDjTime.nMon = INT8U_TO_BCD(pRecBuf[nDatalen]);
+                    nDatalen ++;
+                    sDjTime.nDay = INT8U_TO_BCD(pRecBuf[nDatalen]);
+                    nDatalen ++;
+                    sDjTime.nHour = INT8U_TO_BCD(pRecBuf[nDatalen]);
+                    nDatalen ++;
+                    sDjTime.nMin = INT8U_TO_BCD(pRecBuf[nDatalen]);
+                    nDatalen ++;
+                    sDjTime.nSec = INT8U_TO_BCD(pRecBuf[nDatalen]);
+                    nDatalen ++;
+                    
+                    nCopyStart = nDatalen;
+                    nRcsd_Len = pRecBuf[nDatalen ++];
+                    pData[nTxLen ++] = nRcsd_Len;
+               /*     for(i = 0; i < nRcsd_Len; i ++)
+                    {
+                        nCsdType = pRecBuf[nDatalen];
+                        if(nCsdType == 0)
+                        {
+                            memcpy(&nOAD_Arr[nOadLen ++], &pRecBuf[nDatalen], 5);   //Type+OAD
+                            nDatalen += 5;
+                            nTxLen += 5;
+                        }
+                        
+                    }
+                    memcpy(pData, pRecBuf + nCopyStart, nTxLen);
+                    pData[nTxLen++] = 1;
+                    pData[nTxLen++] = nRecordLen;
+                    for(i = 0; i < nRecordLen; i ++)
+                    {
+                        nTxLen += GB698RecordDataProc(nOAD_Arr,nOadLen, nOI, pDjTime, &pData[nTxLen]);
+                    }*/
+              }
+            break;
+        case 0x3011:
+            if( 2 == pRecBuf[nDatalen ++] )   //事件记录表
+            {
+                if( 9 == pRecBuf[nDatalen ++] )   //方法9
+                {
+                    pRecBuf[nDatalen ++];         //上几次事件记录
+                    nCopyStart = nDatalen;
+                    nRcsd_Len = pRecBuf[nDatalen ++];
+                    pData[nTxLen ++] = nRcsd_Len;
+                }
+                
+            }
+            break;
+        default:break;
+    }
+    
+    for(i = 0; i < nRcsd_Len; i ++)
+    {
+        nCsdType = pRecBuf[nDatalen];
+        if(nCsdType == 0)
+        {
+            memcpy(&nOAD_Arr[nOadLen ++], &pRecBuf[nDatalen], 5);   //Type+OAD
+            nDatalen += 5;
+            nTxLen += 5;
+        }
+        
+    }
+    memcpy(pData, pRecBuf + nCopyStart, nTxLen);
+    nErrLen = nTxLen;
+    pData[nTxLen++] = 1;
+    pData[nTxLen++] = nRecordLen;
+    
+    for(i = 0; i < nRecordLen; i ++)
+    {
+        nTxLen += GB698RecordDataProc(nOAD_Arr,nOadLen, nOI, pDjTime, &pData[nTxLen]);
+    }
+    if( (nTxLen - nErrLen) <= (2 + nOadLen))
+    {
+        pData[nErrLen ++ ] = 0;
+        pData[nErrLen ++ ] = pData[--nTxLen];
+        
+        *pDatalen = nErrLen;
+    }
+    else
+    {
+        *pDatalen = nTxLen;
+    }
+    
+    return 1;
+}
+                           
+INT32S  GB698RecordDataProc(INT8U nOAD_Arr[][5], INT8U	nOadLen, INT16U  nOAD, pSTD_TIME pDjTime, INT8U  *pData)
+{
+    INT8U   i = 0;
+    INT8U   nDatalen  = 0;
+
+    for(i = 0; i < nOadLen; i ++)
+    {
+        if( 0 == nOAD_Arr[i][0] )
+        {
+            nDatalen += GB698GetRequestMakeFrm(&nOAD_Arr[i][1], pData + nDatalen, nOAD, pDjTime);       
+        }
+    }
+    return  nDatalen;
+    
+}
+
+
+INT8S GB698GetRequestMakeFrm(INT8U *OAD, INT8U *pData, INT16U  nMasterOAD, pSTD_TIME pDjTime)
+{                  
+    INT16U      nOI;
+    INT8U       nDataLen = 0;
+    STD_TIME    sTime;
+    INT8U       nData[100];
+    INT8U      *pBuf  = &nData[0];
+    pSTD_TIME   pTimeVld = &sTime;
+    STD_TIME    sTmpTime;
+    INT16U      nTemp;
+    INT8U       nTempBuf[50];
+    INT8U       nNum = 0;
+    INT8U       i =0;
+    INT32U      nConvert = 0;
+    INT8U       nArrayNum = 0;
+    INT32U      nSec = 0;
+    INT32U      nDays = 0;
+    
+    MT_DGN_ENERGY_DATA	sAcEn;
+    MT_DGN_Q_ENERGY_DATA  sAcQEn;
+    MEM_AC_DAY_DATA     sAcHistDayData;
+    MEM_AC_RDAY_DATA     sAcHistData;
+    MT_DGN_C_ENERGY_DATA sAcCombEnergy;  
+    MT_DGN_TRI_ENERGY_DATA  sAcTriEn;
+    MT_DGN_TRI_Q_EN_DATA  sAcTriQEn;
+    MEM_AC_PRM	sAc_Param;
+	
+    memset(&sAcTriEn, 0, sizeof(sAcTriEn));
+    memset(&sTmpTime, 0, sizeof(STD_TIME));
+    memset(pTimeVld, 0, sizeof(STD_TIME));
+    memset(&sAcHistData, 0, sizeof(sAcHistData));
+    memset(&sAcHistDayData, 0, sizeof(sAcHistDayData));
+    memset(&sAcTriQEn, 0, sizeof(MT_DGN_TRI_Q_EN_DATA));
+    
+    MemReadAcRealData(F1, &sAcEn, sizeof(sAcEn));
+    MemReadAcRealData(F2, &sAcQEn, sizeof(sAcQEn));
+    MemReadAcRealData(F3, &sAcTriEn, sizeof(sAcTriEn));
+	MemReadAcRealData(F4, &sAcTriQEn, sizeof(sAcTriQEn));
+    
+    nOI = ((OAD[0] << 8) | OAD[1]);
+    if( 0xFFFF != nMasterOAD)
+    {
+        switch(nMasterOAD)
+        {
+            case  0x5000:
+                pDjTime = NULL;
+                if( ((nOI & 0x00F0 ) >> 4) > 0 && ((nOI & 0x00F0 ) >> 4) <= 4 )
+                {
+                    MemReadAcRealData(F1, &sAcEn, sizeof(sAcEn));
+                }
+                else if(((nOI & 0x00F0 ) >> 4) > 4 && ((nOI & 0x00F0 ) >> 4) <= 8)
+                {
+                    MemReadAcRealData(F2, &sAcQEn, sizeof(sAcQEn));
+                }
+                RTCDateTimeRead(pTimeVld);
+                break;
+            case  0x5004:
+                {
+                    RTCDateTimeRead(&sTmpTime);
+                    if(GetDiffTimeSecs(&sTmpTime, pDjTime, &nSec) < 0)
+                    {
+                        break;
+                    }
+                    if(nSec < 0)
+                    {
+                        break;
+                    }
+                    nDays = GetDaysFrom2KYear(&sTmpTime) - GetDaysFrom2KYear(pDjTime) + 1;
+                    MemReadAcHistDataProtProc(F1, nDays, &sAcHistDayData, sizeof(sAcHistDayData));
+                    memcpy(&sAcEn, &sAcHistDayData.sAcEnergy, sizeof(sAcEn));
+                    memcpy(pTimeVld, &sAcHistDayData.sTime, sizeof(STD_TIME));
+                } 
+                break;
+            case 0x5006:
+                break;
+            default: break;
+        }
+    }
+    switch (nOI)
+    {
+        case  0x2022:
+            pData[nDataLen++] = e_double_long_unsigned;
+            MemReadAcXFlhBackData(F41, &nNum, sizeof(nNum));
+            pData[nDataLen++] = 0;
+            pData[nDataLen++] = 0;
+            pData[nDataLen++] = 0;
+            pData[nDataLen++] = nNum;
+            break;
+          case  0x201e:
+              
+            MemReadAcEvtProc(F12, 1, &nData[0], LEN_AC_EVENT);
+            memcpy(pTimeVld, nData, 6);
+            nTempBuf[0] = pTimeVld->nYear;
+            nTempBuf[1] = 0x20;
+            nTemp = BCD2INT32U(&nTempBuf[0], 4);
+            INT16U2Buf(&nTempBuf[0], nTemp);
+            
+            pData[nDataLen++] = e_date_time_s;
+            pData[nDataLen++] = nTempBuf[1];
+            pData[nDataLen++] = nTempBuf[0];
+            pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nMon);
+            pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nDay);
+            pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nHour);
+            pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nMin);
+            pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nSec);
+            break;
+          case  0x2020:
+            MemReadAcEvtProc(F12, 1, &nData[0], LEN_AC_EVENT);
+            memcpy(pTimeVld, &nData[6], 6);
+            nTempBuf[0] = pTimeVld->nYear;
+            nTempBuf[1] = 0x20;
+            nTemp = BCD2INT32U(&nTempBuf[0], 4);
+            INT16U2Buf(&nTempBuf[0], nTemp);
+            
+            pData[nDataLen++] = e_date_time_s;
+            pData[nDataLen++] = nTempBuf[1];
+            pData[nDataLen++] = nTempBuf[0];
+            pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nMon);
+            pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nDay);
+            pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nHour);
+            pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nMin);
+            pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nSec);
+            break;
+        case 0x4000:
+            if (RET_ERR_OK != GetSysClk(pTimeVld))
+            {
+                pData[nDataLen++] = e_HardFault;
+                return -1;
+            }
+            pData[nDataLen++] = e_date_time_s;
+
+            nTempBuf[0] = pTimeVld->nYear;
+            nTempBuf[1] = 0x20;
+            nTemp = BCD2INT32U(&nTempBuf[0], 4);
+            INT16U2Buf(&nTempBuf[0], nTemp);
+            
+            pData[nDataLen++] = nTempBuf[1];
+            pData[nDataLen++] = nTempBuf[0];
+            pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nMon);
+            
+            if (0x02==(g_MeterInsideWrong[0]&0x02)) //时间显示故障
+            {
+                if(pTimeVld->nDay < 0x27)
+                 {
+                    pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nDay+2);
+                 }
+                else
+                {
+                    pData[nDataLen++] = 3;
+                }
+            }
+            else
+            {
+              pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nDay);
+            }
+            
+            pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nHour);
+            if (0x02==(g_MeterInsideWrong[0]&0x02)) //时间显示故障
+            {
+                if (pTimeVld->nMin < 0x48)
+                 {
+                    pData[nDataLen++] =BCD_TO_INT8U(pTimeVld->nMin+10);
+                 }
+                else
+                {
+                    pData[nDataLen++] = 5;
+                }
+            }
+            else
+            {
+              pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nMin);
+            }
+            pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nSec);
+    
+            break;
+        case 0x4001:
+        {
+            memset(nTempBuf, 0, sizeof(nTempBuf));
+            MemReadAcPrm(F19, &nTempBuf[0], 6);
+            
+            pData[nDataLen++] = e_octet_string;
+            pData[nDataLen++] = 6;           
+            ReverseOutput(&nTempBuf[0], pData + nDataLen, 6); 
+            nDataLen += 6;          
+            break;
+        }
+        case 0x4002:
+        {
+            memset(nTempBuf, 0, sizeof(nTempBuf));
+            MemReadAcPrm(F21, &nTempBuf[0], 6);
+            
+            pData[nDataLen++] = e_octet_string;
+            pData[nDataLen++] = 6;           
+            ReverseOutput(&nTempBuf[0], pData + nDataLen, 6); 
+            nDataLen += 6;          
+            break;
+        }
+        case 0x2021:
+        { 
+            pData[nDataLen++] = e_date_time_s;
+            nTempBuf[0] = pTimeVld->nYear;
+            nTempBuf[1] = 0x20;
+            nTemp = BCD2INT32U(&nTempBuf[0], 4);
+            INT16U2Buf(&nTempBuf[0], nTemp);
+            
+            pData[nDataLen++] = nTempBuf[1];
+            pData[nDataLen++] = nTempBuf[0];
+            pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nMon);
+            pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nDay);
+            pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nHour);
+            pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nMin);
+            pData[nDataLen++] = BCD_TO_INT8U(pTimeVld->nSec);
+            break;
+        }
+        
+        case 0x0000:
+        {   
+			MemReadAcRealData(F5, &sAcCombEnergy.sPPEnergy[0], sizeof(sAcCombEnergy)); 
+			if( OAD[3]==0 )
+			{
+				if (!IsAllBcd(&sAcCombEnergy.sPPEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+				{
+					memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+				}        
+				pData[nDataLen++]  = e_array;
+				pData[nDataLen++];
+				for(i = 0; i <= MAX_FEE_NUM; i ++)
+				{
+					pData[nDataLen++] = e_double_long;
+                    if (g_MeterAcErrFlg[0])
+                    {
+                        memcpy(&nTempBuf[0], &sAcCombEnergy.sPPEnergy[i], sizeof(FORMAT11));
+                        if (i < 2)
+                        {
+                            nTempBuf[0] = 0x66;
+                            nTempBuf[3] = 0x78;
+                        }
+                        nConvert = Bcdbuf2Long(&nTempBuf[0], sizeof(FORMAT11));
+                    }
+                    else if (g_MeterAcErrFlg[3])
+                    {
+                        memcpy(&nTempBuf[0], &sAcCombEnergy.sPPEnergy[i], sizeof(FORMAT11));
+                        if (0 == i)
+                        {
+                            nTempBuf[0] = 0x66;
+                            nTempBuf[1] = 0x34;
+                            nTempBuf[2] = 0x05;
+                        }
+                        else if(1 == i)
+                        {
+                            nTempBuf[0] = 0x33;
+                            nTempBuf[1] = 0x67;
+                            nTempBuf[2] = 0x04;
+                        }
+                        nConvert = Bcdbuf2Long(&nTempBuf[0], sizeof(FORMAT11));
+                    }
+                    else
+                    {
+                        nConvert = Bcdbuf2Long(&sAcCombEnergy.sPPEnergy[i].nD1, sizeof(FORMAT11));
+                    }
+					
+					Long2Buf(&sAcCombEnergy.sPPEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+					ReverseOutput(&sAcCombEnergy.sPPEnergy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+					nDataLen += sizeof(FORMAT11);             
+					nArrayNum ++;
+				}
+				pData[1] = nArrayNum;
+				break;
+			}
+			else
+			{
+                if( OAD[3]>5 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+				if (!IsAllBcd(&sAcCombEnergy.sPPEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+				{
+					memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+				}        
+				i = OAD[3]-1;
+				pData[nDataLen++] = e_double_long;
+                if (g_MeterAcErrFlg[0])
+                {
+                    memcpy(&nTempBuf[0], &sAcCombEnergy.sPPEnergy[i], sizeof(FORMAT11));
+                    if (i < 2)
+                    {
+                        nTempBuf[0] = 0x66;
+                        nTempBuf[3] = 0x78;
+                    }
+                    nConvert = Bcdbuf2Long(&nTempBuf[0], sizeof(FORMAT11));
+                }
+                else if (g_MeterAcErrFlg[3])
+                {
+                    memcpy(&nTempBuf[0], &sAcCombEnergy.sPPEnergy[i], sizeof(FORMAT11));
+                    if (0 == i)
+                    {
+                        nTempBuf[0] = 0x66;
+                        nTempBuf[1] = 0x34;
+                        nTempBuf[2] = 0x05;
+                    }
+                    else if(1 == i)
+                    {
+                        nTempBuf[0] = 0x33;
+                        nTempBuf[1] = 0x67;
+                        nTempBuf[2] = 0x04;
+                    }
+                    nConvert = Bcdbuf2Long(&nTempBuf[0], sizeof(FORMAT11));
+                }
+                else
+                {
+                    nConvert = Bcdbuf2Long(&sAcCombEnergy.sPPEnergy[i].nD1, sizeof(FORMAT11));
+                }
+				Long2Buf(&sAcCombEnergy.sPPEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+				ReverseOutput(&sAcCombEnergy.sPPEnergy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+				nDataLen += sizeof(FORMAT11);             
+				nArrayNum ++;
+				break;
+			}		  
+            
+        }
+        case 0x0010:
+        {    
+          
+          if( OAD[3]==0 )
+          {
+              if (!IsAllBcd(&sAcEn.sPPEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+              {
+                  memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+              }        
+              pData[nDataLen++]  = e_array;
+              pData[nDataLen++];
+              for(i = 0; i <= MAX_FEE_NUM; i ++)
+              {
+                  pData[nDataLen++] = e_double_long_unsigned;
+                    if (g_MeterAcErrFlg[0])
+                    {
+                        memcpy(&nTempBuf[0], &sAcEn.sPPEnergy[i], sizeof(FORMAT11));
+                        if (i < 2)
+                        {
+                            nTempBuf[0] = 0x66;
+                            nTempBuf[3] = 0x78;
+                        }
+                        nConvert = Bcdbuf2Long(&nTempBuf[0], sizeof(FORMAT11));
+                    }
+                    else if (g_MeterAcErrFlg[3])
+                    {
+                        memcpy(&nTempBuf[0], &sAcEn.sPPEnergy[i], sizeof(FORMAT11));
+                        if (0 == i)
+                        {
+                            nTempBuf[0] = 0x66;
+                            nTempBuf[1] = 0x34;
+                            nTempBuf[2] = 0x05;
+                        }
+                        else if(1 == i)
+                        {
+                            nTempBuf[0] = 0x33;
+                            nTempBuf[1] = 0x67;
+                            nTempBuf[2] = 0x04;
+                        }
+                        nConvert = Bcdbuf2Long(&nTempBuf[0], sizeof(FORMAT11));
+                    }
+                    else
+                    {
+                        nConvert = Bcdbuf2Long(&sAcEn.sPPEnergy[i].nD1, sizeof(FORMAT11));
+                    }
+                  Long2Buf(&sAcEn.sPPEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+                  ReverseOutput(&sAcEn.sPPEnergy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+                  nDataLen += sizeof(FORMAT11);             
+                  nArrayNum ++;
+                  
+              }
+              pData[1] = nArrayNum;
+              break;
+          }
+          else
+          {
+              if( OAD[3]>5 )
+              {
+                  nDataLen = 0;
+                  pData[nDataLen++] = e_RefuseRW;
+                  break;
+              }
+              if (!IsAllBcd(&sAcEn.sPPEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+              {
+                  memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+              }        
+             
+              pData[nDataLen++] = e_double_long_unsigned;
+              i=OAD[3]-1;
+               if (g_MeterAcErrFlg[0])
+                {
+                    memcpy(&nTempBuf[0], &sAcEn.sPPEnergy[i], sizeof(FORMAT11));
+                    if (i < 2)
+                    {
+                        nTempBuf[0] = 0x66;
+                        nTempBuf[3] = 0x78;
+                    }
+                    nConvert = Bcdbuf2Long(&nTempBuf[0], sizeof(FORMAT11));
+                }
+                else if (g_MeterAcErrFlg[3])
+                {
+                    memcpy(&nTempBuf[0], &sAcEn.sPPEnergy[i], sizeof(FORMAT11));
+                    if (0 == i)
+                    {
+                        nTempBuf[0] = 0x66;
+                        nTempBuf[1] = 0x34;
+                        nTempBuf[2] = 0x05;
+                    }
+                    else if(1 == i)
+                    {
+                        nTempBuf[0] = 0x33;
+                        nTempBuf[1] = 0x67;
+                        nTempBuf[2] = 0x04;
+                    }
+                    nConvert = Bcdbuf2Long(&nTempBuf[0], sizeof(FORMAT11));
+                }
+                else
+                {
+                    nConvert = Bcdbuf2Long(&sAcEn.sPPEnergy[i].nD1, sizeof(FORMAT11));
+                }
+              Long2Buf(&sAcEn.sPPEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+              ReverseOutput(&sAcEn.sPPEnergy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+              nDataLen += sizeof(FORMAT11);             
+              break;
+          }    
+        }
+       
+        case 0x0020:
+        {   
+            if( OAD[3]==0 )
+            {
+                if (!IsAllBcd(&sAcEn.sNPEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+                {
+                    memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+                }   
+                pData[nDataLen++]  = e_array;
+                pData[nDataLen++];
+                for(i = 0; i <= MAX_FEE_NUM; i ++)
+                {
+                    pData[nDataLen ++] = e_double_long_unsigned;
+                    nConvert = Bcdbuf2Long(&sAcEn.sNPEnergy[i].nD1, sizeof(FORMAT11));
+                    Long2Buf(&sAcEn.sNPEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+                    ReverseOutput(&sAcEn.sNPEnergy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+                    nDataLen += sizeof(FORMAT11);
+                    nArrayNum ++;
+                    
+                }
+                pData[1] = nArrayNum;
+                break;
+            }
+            else
+            {
+                if( OAD[3]>5 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                if (!IsAllBcd(&sAcEn.sNPEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+                {
+                    memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+                }   
+                i=OAD[3]-1;
+                pData[nDataLen ++] = e_double_long_unsigned;
+                nConvert = Bcdbuf2Long(&sAcEn.sNPEnergy[i].nD1, sizeof(FORMAT11));
+                Long2Buf(&sAcEn.sNPEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+                ReverseOutput(&sAcEn.sNPEnergy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+                nDataLen += sizeof(FORMAT11);
+                break;
+            }
+            
+        }
+        case 0x2000:
+        {
+            if( OAD[3]==0 )
+            {
+                pData[nDataLen++] = e_array;
+                pData[nDataLen++];
+                for(i = 0; i < MAX_PHASE_NUM; i ++)
+                {
+                    pData[nDataLen++] = e_long_unsigned;
+                    if ((1 == g_MeterEventWrong[i]&0x01) || ((0x20+(1<<i)) == (g_MeterVoltPlusFlg&(0x20+(1<<i)))))
+                    { 
+                        memcpy(nTempBuf, &pDataTable->sRealInstant.sRealVolt[i], 2);
+                        DivideTwo(nTempBuf);
+                        nConvert = Bcdbuf2Long(&nTempBuf[0], 2);
+                    }
+                    else if ((0x10+(1<<i)) == (g_MeterVoltPlusFlg&(0x10+(1<<i))))//电压越上限
+                    {
+                        memcpy(nTempBuf, &pDataTable->sRealInstant.sRealVolt[i], 2);
+                        if (0 != nTempBuf[1])
+                        {
+                           nTempBuf[1] += 0x05;
+                        }
+                        nConvert = Bcdbuf2Long(&nTempBuf[0], 2);
+                    }
+                    else if (0x02 ==(g_MeterEventWrong[i]&0x02))
+                    {
+                        nConvert = 0;
+                    }
+                    else
+                    {
+                       nConvert = Bcdbuf2Long(&pDataTable->sRealInstant.sRealVolt[i].nFrac, 2);
+                    }
+
+                    pData[nDataLen++] = (nConvert & 0xFF00) >> 8;
+                    pData[nDataLen++] = nConvert & 0xFF;
+                }
+                nArrayNum = 3;
+                pData[1] = nArrayNum;
+                break;
+            }
+            else
+            {
+                if( OAD[3]>3 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                i=OAD[3]-1;
+                pData[nDataLen++] = e_long_unsigned;
+                if ((1 == g_MeterEventWrong[i]&0x01) || ((0x20+(1<<i)) == (g_MeterVoltPlusFlg&(0x20+(1<<i)))))
+                { 
+                    memcpy(nTempBuf, &pDataTable->sRealInstant.sRealVolt[i], 2);
+                    DivideTwo(nTempBuf);
+                    nConvert = Bcdbuf2Long(&nTempBuf[0], 2);
+                }
+                else if ((0x10+(1<<i)) == (g_MeterVoltPlusFlg&(0x10+(1<<i))))//电压越上限
+                {
+                    memcpy(nTempBuf, &pDataTable->sRealInstant.sRealVolt[i], 2);
+                    if (0 != nTempBuf[1])
+                    {
+                       nTempBuf[1] += 0x05;
+                    }
+                    nConvert = Bcdbuf2Long(&nTempBuf[0], 2);
+                }
+                else if (0x02==(g_MeterEventWrong[i]&0x02))
+                {
+                    nConvert = 0;
+                }
+                else
+                {
+                   nConvert = Bcdbuf2Long(&pDataTable->sRealInstant.sRealVolt[i].nFrac, 2);
+                }
+                
+                pData[nDataLen++] = (nConvert & 0xFF00) >> 8;
+                pData[nDataLen++] = nConvert & 0xFF;
+                break;
+            }    
+            
+        }
+        case 0x2001:
+        {
+            if( OAD[3]==0 )
+            {
+                pData[nDataLen++] = e_array;
+                pData[nDataLen++];
+                for(i = 0; i < MAX_PHASE_NUM; i ++)
+                {
+                    pData[nDataLen++] = e_double_long;
+                    if (0x04==(g_MeterEventWrong[i]&0x04))
+                    {
+                        nConvert = 0;
+                    }  
+                    else
+                    {
+                       nConvert = Bcdbuf2Long(&pDataTable->sRealInstant.sRealCurr[i].nD1, 3); 
+                    }
+                    memset(nTempBuf, 0, sizeof(nTempBuf));
+                    Long2Buf(nTempBuf, nConvert, 4);
+                    ReverseOutput(nTempBuf, pData + nDataLen, 4);
+                    nDataLen += 4;
+                    nArrayNum ++;
+                }
+                pData[1] = nArrayNum;
+                break;
+            }
+            else
+            {
+                if( OAD[3]>3 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                i=OAD[3]-1;
+                pData[nDataLen++] = e_double_long;
+                if (0x04==(g_MeterEventWrong[i]&0x04))
+                {
+                    nConvert = 0;
+                }  
+                else
+                {
+                   nConvert = Bcdbuf2Long(&pDataTable->sRealInstant.sRealCurr[i].nD1, 3); 
+                }
+                memset(nTempBuf, 0, sizeof(nTempBuf));
+                Long2Buf(nTempBuf, nConvert, 4);
+                ReverseOutput(nTempBuf, pData + nDataLen, 4);
+                nDataLen += 4;
+                break;
+            }    
+        }	
+
+        case 0x2004:
+        {
+            if( OAD[3]==0 )
+            {//索引是0 要求总
+                pData[nDataLen++] = e_array;
+                pData[nDataLen++];
+                for(i = 0; i < MAX_PHASE_NUM + 1; i ++)
+                {
+                    pData[nDataLen++] = e_double_long;
+                    nConvert = Bcdbuf2Long(&pDataTable->sRealInstant.sRealP[i].nFrac0, 3);
+                    memset(nTempBuf, 0, sizeof(nTempBuf));
+                    Long2Buf(nTempBuf, nConvert, 4);
+                    ReverseOutput(nTempBuf, pData + nDataLen, 4);
+                    nDataLen += 4;
+                    nArrayNum ++;
+                }
+                pData[1] = nArrayNum;
+                break;
+            }
+            else
+            {//OAD[3] != 0
+                if( OAD[3]>4 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                i=OAD[3]-1;
+                pData[nDataLen++] = e_double_long;
+                nConvert = Bcdbuf2Long(&pDataTable->sRealInstant.sRealP[i].nFrac0, 3);
+                memset(nTempBuf, 0, sizeof(nTempBuf));
+                Long2Buf(nTempBuf, nConvert, 4);
+                ReverseOutput(nTempBuf, pData + nDataLen, 4);
+                nDataLen += 4;
+                break;
+            }    
+        }
+        case 0x2005:
+        {
+            if( OAD[3]==0 )
+            {//索引是0 要求总
+                pData[nDataLen++] = e_array;
+                pData[nDataLen++];
+                for(i = 0; i < MAX_PHASE_NUM + 1; i ++)
+                {
+                    pData[nDataLen++] = e_double_long;
+                    nConvert = Bcdbuf2Long(&pDataTable->sRealInstant.sRealQ[i].nFrac0, 3);
+                    memset(nTempBuf, 0, sizeof(nTempBuf));
+                    Long2Buf(nTempBuf, nConvert, 4);
+                    ReverseOutput(nTempBuf, pData + nDataLen, 4);
+                    nDataLen += 4;
+                    nArrayNum ++;
+                }
+                pData[1] = nArrayNum;
+                break;
+            }
+            else
+            {//OAD[3] != 0
+                if( OAD[3]>4 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                i=OAD[3]-1;
+                pData[nDataLen++] = e_double_long;
+                nConvert = Bcdbuf2Long(&pDataTable->sRealInstant.sRealQ[i].nFrac0, 3);
+                memset(nTempBuf, 0, sizeof(nTempBuf));
+                Long2Buf(nTempBuf, nConvert, 4);
+                ReverseOutput(nTempBuf, pData + nDataLen, 4);
+                nDataLen += 4;
+                nArrayNum ++;
+                break;
+            }    
+        }
+        case 0x2006:
+        {
+            if( OAD[3]==0 )
+            {//索引是0 要求总
+                pData[nDataLen++] = e_array;
+                pData[nDataLen++];
+                for(i = 0; i < MAX_PHASE_NUM + 1; i ++)
+                {
+                    pData[nDataLen++] = e_double_long;
+                    nConvert = Bcdbuf2Long(&pDataTable->sRealInstant.sRealS[i].nFrac0, 3);
+                    memset(nTempBuf, 0, sizeof(nTempBuf));
+                    Long2Buf(nTempBuf, nConvert, 4);
+                    ReverseOutput(nTempBuf, pData + nDataLen, 4);
+                    nDataLen += 4;
+                    nArrayNum ++;
+                }
+                pData[1] = nArrayNum;
+                break;
+            }
+            else
+            {//OAD[3] != 0
+                if( OAD[3]>4 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                i=OAD[3]-1;
+                pData[nDataLen++] = e_double_long;
+                nConvert = Bcdbuf2Long(&pDataTable->sRealInstant.sRealS[i].nFrac0, 3);
+                memset(nTempBuf, 0, sizeof(nTempBuf));
+                Long2Buf(nTempBuf, nConvert, 4);
+                ReverseOutput(nTempBuf, pData + nDataLen, 4);
+                nDataLen += 4;
+                nArrayNum ++;
+                break;
+            }    
+
+        }
+        case 0x200A:
+        {
+            if( OAD[3]==0 )
+            {//索引是0 要求总
+                pData[nDataLen++] = e_array;
+                pData[nDataLen++];
+                for(i = 0; i < MAX_PHASE_NUM + 1; i ++)
+                {
+                    pData[nDataLen++] = e_long;
+                    nConvert = BCD_TO_INT8U(pDataTable->sRealInstant.sRealPf[i].nFrac) + ((INT16U)(BCD_TO_INT8U(pDataTable->sRealInstant.sRealPf[i].nSint & 0x7F)) * 100);
+                    memset(nTempBuf, 0, sizeof(nTempBuf));
+                    Long2Buf(nTempBuf, nConvert, 2);
+                    ReverseOutput(nTempBuf, pData + nDataLen,2);
+                    nDataLen += 2;
+                    nArrayNum ++;
+                }
+                pData[1] = nArrayNum;
+                break;
+            }
+            else
+            {//OAD[3] != 0
+                if( OAD[3]>4 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                //删除如下2行
+                //pData[nDataLen++]  = e_array;
+                //pData[nDataLen++];
+                //在for循环前
+                
+                //删除如下2行
+                //nArrayNum ++;
+                //pData[1] = nArrayNum;
+                i=OAD[3]-1;
+                pData[nDataLen++] = e_long;
+                nConvert = BCD_TO_INT8U(pDataTable->sRealInstant.sRealPf[i].nFrac) + ((INT16U)(BCD_TO_INT8U(pDataTable->sRealInstant.sRealPf[i].nSint & 0x7F)) * 100);
+                memset(nTempBuf, 0, sizeof(nTempBuf));
+                Long2Buf(nTempBuf, nConvert, 2);
+                ReverseOutput(nTempBuf, pData + nDataLen,2);
+                nDataLen += 2;
+                break;
+            }    
+            
+        }
+        //以下是三相表特有的，单相表读了回复 6
+        case 0x0030:
+        {   
+			if( g_nHardType==1 )
+            {//单相表
+                nDataLen = 0;
+                pData[nDataLen++] = e_NoObject;
+                break;
+            }
+			else
+			{//
+				if( OAD[3]==0 )
+				{
+					if (!IsAllBcd(&sAcEn.sPNEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+					{
+						memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+					} 
+					pData[nDataLen++]  = e_array;
+					pData[nDataLen++];
+					for(i = 0; i <= MAX_FEE_NUM; i ++)
+					{
+						pData[nDataLen ++] = e_double_long;
+						nConvert = Bcdbuf2Long(&sAcEn.sPNEnergy[i].nD1, sizeof(FORMAT11));
+						Long2Buf(&sAcEn.sPNEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+						ReverseOutput(&sAcEn.sPNEnergy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+						nDataLen += sizeof(FORMAT11);
+						nArrayNum ++;
+						
+					}
+					pData[1] = nArrayNum;
+					break;
+				}
+				else
+				{
+					if( OAD[3]>5 )
+						break;
+					if (!IsAllBcd(&sAcEn.sPNEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+					{
+						memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+					} 
+					i=OAD[3]-1;
+					pData[nDataLen ++] = e_double_long;
+					nConvert = Bcdbuf2Long(&sAcEn.sPNEnergy[i].nD1, sizeof(FORMAT11));
+					Long2Buf(&sAcEn.sPNEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+					ReverseOutput(&sAcEn.sPNEnergy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+					nDataLen += sizeof(FORMAT11);			
+					break;
+				}
+			}
+        }
+        case 0x0040:
+        {   
+
+            if (!IsAllBcd(&sAcEn.sNNEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+            {
+                memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+            } 
+            pData[nDataLen++]  = e_array;
+            pData[nDataLen++];
+            for(i = 0; i <= MAX_FEE_NUM; i ++)
+            {
+                pData[nDataLen ++] = e_double_long;
+                nConvert = Bcdbuf2Long(&sAcEn.sNNEnergy[i].nD1, sizeof(FORMAT11));
+                Long2Buf(&sAcEn.sNNEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+                ReverseOutput(&sAcEn.sNNEnergy[0].nD1, pData + nDataLen, sizeof(FORMAT11));
+                nDataLen += sizeof(FORMAT11);
+                nArrayNum ++;
+                
+            }
+            pData[1] = nArrayNum;
+            break;
+        }
+        case 0x0050:
+        {   
+		    if( g_nHardType==1 )
+            {//单相表
+                nDataLen = 0;
+                pData[nDataLen++] = e_NoObject;
+                break;
+            }
+            else
+            {
+                if( OAD[3]==0 )
+				{//索引是0 要求总
+					if (!IsAllBcd(&sAcQEn.sQ1Energy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+					{
+						memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+					} 
+					pData[nDataLen++]  = e_array;
+					pData[nDataLen++];
+					for(i = 0; i <= MAX_FEE_NUM; i ++)
+					{
+						pData[nDataLen ++] = e_double_long_unsigned;
+						nConvert = Bcdbuf2Long(&sAcQEn.sQ1Energy[i].nD1, sizeof(FORMAT11));
+						Long2Buf(&sAcQEn.sQ1Energy[i].nD1, nConvert, sizeof(FORMAT11));
+						ReverseOutput(&sAcQEn.sQ1Energy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+						nDataLen += sizeof(FORMAT11);
+						nArrayNum ++;
+						
+					}
+					pData[1] = nArrayNum;
+					break;
+				}
+				else
+				{//OAD[3] != 0
+					if( OAD[3]>5 )
+						break;
+					if (!IsAllBcd(&sAcQEn.sQ1Energy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+					{
+						memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+					} 
+					i=OAD[3]-1;
+					pData[nDataLen ++] = e_double_long_unsigned;
+					nConvert = Bcdbuf2Long(&sAcQEn.sQ1Energy[i].nD1, sizeof(FORMAT11));
+					Long2Buf(&sAcQEn.sQ1Energy[i].nD1, nConvert, sizeof(FORMAT11));
+					ReverseOutput(&sAcQEn.sQ1Energy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+					nDataLen += sizeof(FORMAT11);
+					break;
+				} 
+                
+            }
+            
+        }
+
+        case 0x0060:
+        {   
+			if( g_nHardType==1 )
+			{//单相表
+				nDataLen = 0;
+				pData[nDataLen++] = e_NoObject;
+				break;
+			}
+			else
+			{
+				if( OAD[3]==0 )
+				{//索引是0 要求总
+					if (!IsAllBcd(&sAcQEn.sQ2Energy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+					{
+						memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+					} 
+					pData[nDataLen++]  = e_array;
+					pData[nDataLen++];
+					for(i = 0; i <= MAX_FEE_NUM; i ++)
+					{
+						pData[nDataLen ++] = e_double_long_unsigned;
+						nConvert = Bcdbuf2Long(&sAcQEn.sQ2Energy[i].nD1, sizeof(FORMAT11));
+						Long2Buf(&sAcQEn.sQ2Energy[i].nD1, nConvert, sizeof(FORMAT11));
+						ReverseOutput(&sAcQEn.sQ2Energy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+						nDataLen += sizeof(FORMAT11);
+						nArrayNum ++;
+						
+					}
+					pData[1] = nArrayNum;
+					break;
+				}
+				else
+				{//OAD[3] != 0
+					if( OAD[3]>5 )
+						break;
+					if (!IsAllBcd(&sAcQEn.sQ2Energy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+					{
+						memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+					} 
+					i=OAD[3]-1;
+					pData[nDataLen ++] = e_double_long_unsigned;
+					nConvert = Bcdbuf2Long(&sAcQEn.sQ2Energy[i].nD1, sizeof(FORMAT11));
+					Long2Buf(&sAcQEn.sQ2Energy[i].nD1, nConvert, sizeof(FORMAT11));
+					ReverseOutput(&sAcQEn.sQ2Energy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+					nDataLen += sizeof(FORMAT11);
+					break;
+				} 
+				
+			}
+            
+        }
+        case 0x0070:
+        {   
+			if( g_nHardType==1 )
+			{//单相表
+				nDataLen = 0;
+				pData[nDataLen++] = e_NoObject;
+				break;
+			}
+			else
+			{
+				if( OAD[3]==0 )
+				{//索引是0 要求总
+					if (!IsAllBcd(&sAcQEn.sQ3Energy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+					{
+						memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+					} 
+					pData[nDataLen++]  = e_array;
+					pData[nDataLen++];
+					for(i = 0; i <= MAX_FEE_NUM; i ++)
+					{
+						pData[nDataLen ++] = e_double_long_unsigned;
+						nConvert = Bcdbuf2Long(&sAcQEn.sQ3Energy[i].nD1, sizeof(FORMAT11));
+						Long2Buf(&sAcQEn.sQ3Energy[i].nD1, nConvert, sizeof(FORMAT11));
+						ReverseOutput(&sAcQEn.sQ3Energy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+						nDataLen += sizeof(FORMAT11);
+						nArrayNum ++;
+						
+					}
+					pData[1] = nArrayNum;
+					break;
+				}
+				else
+				{//OAD[3] != 0
+					if( OAD[3]>5 )
+						break;
+					if (!IsAllBcd(&sAcQEn.sQ3Energy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+					{
+						memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+					} 
+					i=OAD[3]-1;
+					pData[nDataLen ++] = e_double_long_unsigned;
+					nConvert = Bcdbuf2Long(&sAcQEn.sQ3Energy[i].nD1, sizeof(FORMAT11));
+					Long2Buf(&sAcQEn.sQ3Energy[i].nD1, nConvert, sizeof(FORMAT11));
+					ReverseOutput(&sAcQEn.sQ3Energy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+					nDataLen += sizeof(FORMAT11);
+					break;
+				} 
+				
+			}
+            
+        }
+        case 0x0080:
+        {   
+			if( g_nHardType==1 )
+			{//单相表
+				nDataLen = 0;
+				pData[nDataLen++] = e_NoObject;
+				break;
+			}
+			else
+			{
+				if( OAD[3]==0 )
+				{//索引是0 要求总
+					if (!IsAllBcd(&sAcQEn.sQ4Energy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+					{
+						memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+					} 
+					pData[nDataLen++]  = e_array;
+					pData[nDataLen++];
+					for(i = 0; i <= MAX_FEE_NUM; i ++)
+					{
+						pData[nDataLen ++] = e_double_long_unsigned;
+						nConvert = Bcdbuf2Long(&sAcQEn.sQ4Energy[i].nD1, sizeof(FORMAT11));
+						Long2Buf(&sAcQEn.sQ4Energy[i].nD1, nConvert, sizeof(FORMAT11));
+						ReverseOutput(&sAcQEn.sQ4Energy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+						nDataLen += sizeof(FORMAT11);
+						nArrayNum ++;
+						
+					}
+					pData[1] = nArrayNum;
+					break;
+				}
+				else
+				{//OAD[3] != 0
+					if( OAD[3]>5 )
+						break;
+					if (!IsAllBcd(&sAcQEn.sQ4Energy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+					{
+						memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+					} 
+					i=OAD[3]-1;
+					pData[nDataLen ++] = e_double_long_unsigned;
+					nConvert = Bcdbuf2Long(&sAcQEn.sQ4Energy[i].nD1, sizeof(FORMAT11));
+					Long2Buf(&sAcQEn.sQ4Energy[i].nD1, nConvert, sizeof(FORMAT11));
+					ReverseOutput(&sAcQEn.sQ4Energy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+					nDataLen += sizeof(FORMAT11);
+					break;
+				}
+		
+			}
+        } 
+        case 0x0011:
+        {
+            if( g_nHardType==1 )
+            {//单相表
+                nDataLen = 0;
+                pData[nDataLen++] = e_NoObject;
+                break;
+            }
+            else
+            {//三相表
+                if( OAD[3]>1 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                
+                if (!IsAllBcd(&sAcTriEn.sPPEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+                {
+                    memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+                }
+                if( OAD[3]==0 )
+                {//索引是0 要求总
+                    pData[nDataLen++]  = e_array;//数据 1
+                    pData[nDataLen++]; //值 1
+                }
+                i = 0;//分A B C三相 0 1 2 
+                pData[nDataLen++] = e_double_long_unsigned; //值 6
+                nConvert = Bcdbuf2Long(&sAcTriEn.sPPEnergy[i].nD1, sizeof(FORMAT11));
+                Long2Buf(&sAcTriEn.sPPEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+                ReverseOutput(&sAcTriEn.sPPEnergy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+                nDataLen += sizeof(FORMAT11);   
+                if( OAD[3]==0 )
+                {		
+                    nArrayNum ++;
+                    pData[1] = nArrayNum;
+                }
+                break;
+            }
+        }
+        case 0x0021://sPPEnergy -> sNPEnergy
+        {
+            if( g_nHardType==1 )
+            {//单相表
+                nDataLen = 0;
+                pData[nDataLen++] = e_NoObject;
+                break;
+            }
+            else
+            {//三相表
+                if( OAD[3]>1 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                MemReadAcRealData(F3, &sAcTriEn, sizeof(sAcTriEn));
+                if (!IsAllBcd(&sAcTriEn.sPPEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+                {
+                    memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+                }
+                if( OAD[3]==0 )
+                {//索引是0 要求总
+                    pData[nDataLen++]  = e_array;//数据 1
+                    pData[nDataLen++]; //值 1
+                }
+                i = 0;
+                pData[nDataLen++] = e_double_long_unsigned; //值 6
+                nConvert = Bcdbuf2Long(&sAcTriEn.sPPEnergy[i].nD1, sizeof(FORMAT11));
+                Long2Buf(&sAcTriEn.sPPEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+                ReverseOutput(&sAcTriEn.sPPEnergy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+                nDataLen += sizeof(FORMAT11);   
+                if( OAD[3]==0 )
+                {		
+                    nArrayNum ++;
+                    pData[1] = nArrayNum;
+                }
+                break;
+            }
+        }
+        case 0x0031: //sPPEnergy ->sPNEnergy
+        {
+            if( g_nHardType==1 )
+            {//单相表
+                nDataLen = 0;
+                pData[nDataLen++] = e_NoObject;
+                break;
+            }
+            else
+            {//三相表
+                if( OAD[3]>1 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                MemReadAcRealData(F3, &sAcTriEn, sizeof(sAcTriEn));
+                if (!IsAllBcd(&sAcTriEn.sPNEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+                {
+                    memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+                }
+                if( OAD[3]==0 )
+                {//索引是0 要求总
+                    pData[nDataLen++]  = e_array;//数据 1
+                    pData[nDataLen++]; //值 1
+                }
+                i = 0;
+                pData[nDataLen++] = e_double_long; //值 5
+                nConvert = Bcdbuf2Long(&sAcTriEn.sPNEnergy[i].nD1, sizeof(FORMAT11));
+                Long2Buf(&sAcTriEn.sPNEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+                ReverseOutput(&sAcTriEn.sPNEnergy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+                nDataLen += sizeof(FORMAT11);   
+                if( OAD[3]==0 )
+                {		
+                    nArrayNum ++;
+                    pData[1] = nArrayNum;
+                }
+                break;
+            }
+        }
+        case 0x0041: //sPPEnergy ->sNNEnergy
+        {
+            if( g_nHardType==1 )
+            {//单相表
+                nDataLen = 0;
+                pData[nDataLen++] = e_NoObject;
+                break;
+            }
+            else
+            {//三相表
+                if( OAD[3]>1 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                MemReadAcRealData(F3, &sAcTriEn, sizeof(sAcTriEn));
+                if (!IsAllBcd(&sAcTriEn.sNNEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+                {
+                    memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+                }
+                if( OAD[3]==0 )
+                {//索引是0 要求总
+                    pData[nDataLen++]  = e_array;//数据 1
+                    pData[nDataLen++]; //值 1
+                }
+                i = 0;
+                pData[nDataLen++] = e_double_long; //值 5
+                nConvert = Bcdbuf2Long(&sAcTriEn.sNNEnergy[i].nD1, sizeof(FORMAT11));
+                Long2Buf(&sAcTriEn.sNNEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+                ReverseOutput(&sAcTriEn.sNNEnergy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+                nDataLen += sizeof(FORMAT11);   
+                if( OAD[3]==0 )
+                {		
+                    nArrayNum ++;
+                    pData[1] = nArrayNum;
+                }
+                break;
+            }
+        }
+        
+        case 0x0012:
+        {
+            if( g_nHardType==1 )
+            {//单相表
+                nDataLen = 0;
+                pData[nDataLen++] = e_NoObject;
+                break;
+            }
+            else
+            {//三相表
+                if( OAD[3]>1 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                if (!IsAllBcd(&sAcTriEn.sPPEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+                {
+                    memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+                }
+                if( OAD[3]==0 )
+                {//索引是0 要求总
+                    pData[nDataLen++]  = e_array;//数据 1
+                    pData[nDataLen++]; //值 1
+                }
+                i = 1;
+                pData[nDataLen++] = e_double_long_unsigned; //值 6
+                nConvert = Bcdbuf2Long(&sAcTriEn.sPPEnergy[i].nD1, sizeof(FORMAT11));
+                Long2Buf(&sAcTriEn.sPPEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+                ReverseOutput(&sAcTriEn.sPPEnergy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+                nDataLen += sizeof(FORMAT11);   
+                if( OAD[3]==0 )
+                {		
+                    nArrayNum ++;
+                    pData[1] = nArrayNum;
+                }
+                break;
+            }
+        }
+        case 0x0022://sPPEnergy -> sNPEnergy
+        {
+            if( g_nHardType==1 )
+            {//单相表
+                nDataLen = 0;
+                pData[nDataLen++] = e_NoObject;
+                break;
+            }
+            else
+            {//三相表
+                if( OAD[3]>1 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                if (!IsAllBcd(&sAcTriEn.sPPEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+                {
+                    memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+                }
+                if( OAD[3]==0 )
+                {//索引是0 要求总
+                    pData[nDataLen++]  = e_array;//数据 1
+                    pData[nDataLen++]; //值 1
+                }
+                i = 1;//分A B C三相 0 1 2 
+                pData[nDataLen++] = e_double_long_unsigned; //值 6
+                nConvert = Bcdbuf2Long(&sAcTriEn.sPPEnergy[i].nD1, sizeof(FORMAT11));
+                Long2Buf(&sAcTriEn.sPPEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+                ReverseOutput(&sAcTriEn.sPPEnergy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+                nDataLen += sizeof(FORMAT11);   
+                if( OAD[3]==0 )
+                {		
+                    nArrayNum ++;
+                    pData[1] = nArrayNum;
+                }
+                break;
+            }
+        }
+        case 0x0032: //sPPEnergy ->sPNEnergy
+        {
+            if( g_nHardType==1 )
+            {//单相表
+                nDataLen = 0;
+                pData[nDataLen++] = e_NoObject;
+                break;
+            }
+            else
+            {//三相表
+                if( OAD[3]>1 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                if (!IsAllBcd(&sAcTriEn.sPNEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+                {
+                    memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+                }
+                if( OAD[3]==0 )
+                {//索引是0 要求总
+                    pData[nDataLen++]  = e_array;//数据 1
+                    pData[nDataLen++]; //值 1
+                }
+                i = 1;
+                pData[nDataLen++] = e_double_long; //值 5
+                nConvert = Bcdbuf2Long(&sAcTriEn.sPNEnergy[i].nD1, sizeof(FORMAT11));
+                Long2Buf(&sAcTriEn.sPNEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+                ReverseOutput(&sAcTriEn.sPNEnergy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+                nDataLen += sizeof(FORMAT11);   
+                if( OAD[3]==0 )
+                {		
+                    nArrayNum ++;
+                    pData[1] = nArrayNum;
+                }
+                break;
+            }
+        }
+        case 0x0042: //sPPEnergy ->sNNEnergy
+        {
+            if( g_nHardType==1 )
+            {//单相表
+                nDataLen = 0;
+                pData[nDataLen++] = e_NoObject;
+                break;
+            }
+            else
+            {//三相表
+                if( OAD[3]>1 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                if (!IsAllBcd(&sAcTriEn.sNNEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+                {
+                    memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+                }
+                if( OAD[3]==0 )
+                {//索引是0 要求总
+                    pData[nDataLen++]  = e_array;//数据 1
+                    pData[nDataLen++]; //值 1
+                }
+                i = 1;
+                pData[nDataLen++] = e_double_long; //值 5
+                nConvert = Bcdbuf2Long(&sAcTriEn.sNNEnergy[i].nD1, sizeof(FORMAT11));
+                Long2Buf(&sAcTriEn.sNNEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+                ReverseOutput(&sAcTriEn.sNNEnergy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+                nDataLen += sizeof(FORMAT11);   
+                if( OAD[3]==0 )
+                {		
+                    nArrayNum ++;
+                    pData[1] = nArrayNum;
+                }
+                break;
+            }
+        }
+        case 0x0013:
+        {
+            if( g_nHardType==1 )
+            {//单相表
+                nDataLen = 0;
+                pData[nDataLen++] = e_NoObject;
+                break;
+            }
+            else
+            {//三相表
+                if( OAD[3]>1 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                if (!IsAllBcd(&sAcTriEn.sPPEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+                {
+                    memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+                }
+                if( OAD[3]==0 )
+                {//索引是0 要求总
+                    pData[nDataLen++]  = e_array;//数据 1
+                    pData[nDataLen++]; //值 1
+                }
+                i = 2;
+                pData[nDataLen++] = e_double_long_unsigned; //值 6
+                nConvert = Bcdbuf2Long(&sAcTriEn.sPPEnergy[i].nD1, sizeof(FORMAT11));
+                Long2Buf(&sAcTriEn.sPPEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+                ReverseOutput(&sAcTriEn.sPPEnergy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+                nDataLen += sizeof(FORMAT11);   
+                if( OAD[3]==0 )
+                {		
+                    nArrayNum ++;
+                    pData[1] = nArrayNum;
+                }
+                break;
+            }
+        }
+        case 0x0023://sPPEnergy -> sNPEnergy
+        {
+            if( g_nHardType==1 )
+            {//单相表
+                nDataLen = 0;
+                pData[nDataLen++] = e_NoObject;
+                break;
+            }
+            else
+            {//三相表
+                if( OAD[3]>1 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                if (!IsAllBcd(&sAcTriEn.sPPEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+                {
+                    memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+                }
+                if( OAD[3]==0 )
+                {//索引是0 要求总
+                    pData[nDataLen++]  = e_array;//数据 1
+                    pData[nDataLen++]; //值 1
+                }
+                i = 2;//分A B C三相 0 1 2 
+                pData[nDataLen++] = e_double_long_unsigned; //值 6
+                nConvert = Bcdbuf2Long(&sAcTriEn.sPPEnergy[i].nD1, sizeof(FORMAT11));
+                Long2Buf(&sAcTriEn.sPPEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+                ReverseOutput(&sAcTriEn.sPPEnergy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+                nDataLen += sizeof(FORMAT11);   
+                if( OAD[3]==0 )
+                {		
+                    nArrayNum ++;
+                    pData[1] = nArrayNum;
+                }
+                break;
+            }
+        }
+        case 0x0033: //sPPEnergy ->sPNEnergy
+        {
+            if( g_nHardType==1 )
+            {//单相表
+                nDataLen = 0;
+                pData[nDataLen++] = e_NoObject;
+                break;
+            }
+            else
+            {//三相表
+                if( OAD[3]>1 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                if (!IsAllBcd(&sAcTriEn.sPNEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+                {
+                    memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+                }
+                if( OAD[3]==0 )
+                {//索引是0 要求总
+                    pData[nDataLen++]  = e_array;//数据 1
+                    pData[nDataLen++]; //值 1
+                }
+                i = 2;
+                pData[nDataLen++] = e_double_long; //值 5
+                nConvert = Bcdbuf2Long(&sAcTriEn.sPNEnergy[i].nD1, sizeof(FORMAT11));
+                Long2Buf(&sAcTriEn.sPNEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+                ReverseOutput(&sAcTriEn.sPNEnergy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+                nDataLen += sizeof(FORMAT11);   
+                if( OAD[3]==0 )
+                {		
+                    nArrayNum ++;
+                    pData[1] = nArrayNum;
+                }
+                break;
+            }
+        }
+        case 0x0043: //sPPEnergy ->sNNEnergy
+        {
+            if( g_nHardType==1 )
+            {//单相表
+                nDataLen = 0;
+                pData[nDataLen++] = e_NoObject;
+                break;
+            }
+            else
+            {//三相表
+                if( OAD[3]>1 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                if (!IsAllBcd(&sAcTriEn.sNNEnergy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+                {
+                    memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+                }
+                if( OAD[3]==0 )
+                {//索引是0 要求总
+                    pData[nDataLen++]  = e_array;//数据 1
+                    pData[nDataLen++]; //值 1
+                }
+                i = 2;
+                pData[nDataLen++] = e_double_long; //值 5
+                nConvert = Bcdbuf2Long(&sAcTriEn.sNNEnergy[i].nD1, sizeof(FORMAT11));
+                Long2Buf(&sAcTriEn.sNNEnergy[i].nD1, nConvert, sizeof(FORMAT11));
+                ReverseOutput(&sAcTriEn.sNNEnergy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+                nDataLen += sizeof(FORMAT11);   
+                if( OAD[3]==0 )
+                {		
+                    nArrayNum ++;
+                    pData[1] = nArrayNum;
+                }
+                break;
+            }
+        }
+        
+        case 0x0051: // &sAcTriQEn.sQ1Energy[0]
+        case 0x0052:
+        case 0x0053:  //A\B\C 三相 第一象限
+        {
+            if( g_nHardType==1 )
+            {//单相表
+                nDataLen = 0;
+                pData[nDataLen++] = e_NoObject;
+                break;
+            }
+            else
+            {//三相表
+                if( OAD[3]>1 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                if (!IsAllBcd(&sAcTriQEn.sQ1Energy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+                {
+                    memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+                }
+                if( OAD[3]==0 )
+                {//索引是0 要求总
+                    pData[nDataLen++]  = e_array;//数据 1
+                    pData[nDataLen++]; //值 1
+                }
+                i = (OAD[1]&0x0F)-1;  //0x51  i = 0;
+                pData[nDataLen++] = e_double_long_unsigned; //值 6
+                nConvert = Bcdbuf2Long(&sAcTriQEn.sQ1Energy[i].nD1, sizeof(FORMAT11));
+                Long2Buf(&sAcTriQEn.sQ1Energy[i].nD1, nConvert, sizeof(FORMAT11));
+                ReverseOutput(&sAcTriQEn.sQ1Energy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+                nDataLen += sizeof(FORMAT11);   
+                if( OAD[3]==0 )
+                {		
+                    nArrayNum ++;
+                    pData[1] = nArrayNum;
+                }
+                break;
+            }
+        }
+        case 0x0061: // &sAcTriQEn.sQ2Energy[0]
+        case 0x0062:
+        case 0x0063:
+        {
+            if( g_nHardType==1 )
+            {//单相表
+                nDataLen = 0;
+                pData[nDataLen++] = e_NoObject;
+                break;
+            }
+            else
+            {//三相表
+                if( OAD[3]>1 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                if (!IsAllBcd(&sAcTriQEn.sQ2Energy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+                {
+                    memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+                }
+                if( OAD[3]==0 )
+                {//索引是0 要求总
+                    pData[nDataLen++]  = e_array;//数据 1
+                    pData[nDataLen++]; //值 1
+                }
+                i = (OAD[1]&0x0F)-1; //分A B C三相 0 1 2 
+                pData[nDataLen++] = e_double_long_unsigned; //值 6
+                nConvert = Bcdbuf2Long(&sAcTriQEn.sQ2Energy[i].nD1, sizeof(FORMAT11));
+                Long2Buf(&sAcTriQEn.sQ2Energy[i].nD1, nConvert, sizeof(FORMAT11));
+                ReverseOutput(&sAcTriQEn.sQ2Energy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+                nDataLen += sizeof(FORMAT11);   
+                if( OAD[3]==0 )
+                {		
+                    nArrayNum ++;
+                    pData[1] = nArrayNum;
+                }
+                break;
+            }
+        }
+        case 0x0071: // &sAcTriQEn.sQ3Energy[0]
+        case 0x0072:
+        case 0x0073:
+        {
+            if( g_nHardType==1 )
+            {//单相表
+                nDataLen = 0;
+                pData[nDataLen++] = e_NoObject;
+                break;
+            }
+            else
+            {//三相表
+                if( OAD[3]>1 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                if (!IsAllBcd(&sAcTriQEn.sQ3Energy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+                {
+                    memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+                }
+                if( OAD[3]==0 )
+                {//索引是0 要求总
+                    pData[nDataLen++]  = e_array;//数据 1
+                    pData[nDataLen++]; //值 1
+                }
+                i = (OAD[1]&0x0F)-1;
+                pData[nDataLen++] = e_double_long_unsigned; //值 6
+                nConvert = Bcdbuf2Long(&sAcTriQEn.sQ3Energy[i].nD1, sizeof(FORMAT11));
+                Long2Buf(&sAcTriQEn.sQ3Energy[i].nD1, nConvert, sizeof(FORMAT11));
+                ReverseOutput(&sAcTriQEn.sQ3Energy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+                nDataLen += sizeof(FORMAT11);   
+                if( OAD[3]==0 )
+                {		
+                    nArrayNum ++;
+                    pData[1] = nArrayNum;
+                }
+                break;
+            }
+        }
+        case 0x0081: // &sAcTriQEn.sQ4Energy[0]
+        case 0x0082:
+        case 0x0083:
+        {
+            if( g_nHardType==1 )
+            {//单相表
+                nDataLen = 0;
+                pData[nDataLen++] = e_NoObject;
+                break;
+            }
+            else
+            {//三相表
+                if( OAD[3]>1 )
+                {
+                    nDataLen = 0;
+                    pData[nDataLen++] = e_RefuseRW;
+                    break;
+                }
+                if (!IsAllBcd(&sAcTriQEn.sQ4Energy[0].nD1, (MAX_FEE_NUM+1)*sizeof(FORMAT11)))
+                {
+                    memset(pBuf , 0xEE ,(MAX_FEE_NUM+1)*sizeof(FORMAT11));
+                }
+                if( OAD[3]==0 )
+                {//索引是0 要求总
+                    pData[nDataLen++]  = e_array;//数据 1
+                    pData[nDataLen++]; //值 1
+                }
+                i = (OAD[1]&0x0F)-1;
+                pData[nDataLen++] = e_double_long_unsigned; //值 6
+                nConvert = Bcdbuf2Long(&sAcTriQEn.sQ4Energy[i].nD1, sizeof(FORMAT11));
+                Long2Buf(&sAcTriQEn.sQ4Energy[i].nD1, nConvert, sizeof(FORMAT11));
+                ReverseOutput(&sAcTriQEn.sQ4Energy[i].nD1, pData + nDataLen, sizeof(FORMAT11));
+                nDataLen += sizeof(FORMAT11);   
+                if( OAD[3]==0 )
+                {		
+                    nArrayNum ++;
+                    pData[1] = nArrayNum;
+                }
+                break;
+            }
+        }
+        case 0xFF16://获取设备类型
+                memset(&sAc_Param, 0, sizeof(MEM_AC_PRM));
+                MemReadAcPrm(F44, &sAc_Param.nHardType, sizeof(sAc_Param.nHardType)); 
+                pData[nDataLen++] = 0x11;
+                pData[nDataLen++] = sAc_Param.nHardType+3;
+                break;
+        default:
+            nDataLen = 0;
+            pData[nDataLen++] = e_NoObject;
+            break;
+    }
+
+    return nDataLen;
+}   

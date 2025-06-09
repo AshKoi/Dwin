@@ -1,0 +1,242 @@
+[Stack]
+FillEnabled=0
+OverflowWarningsEnabled=1
+WarningThreshold=90
+SpWarningsEnabled=1
+WarnLogOnly=1
+UseTrigger=1
+TriggerName=main
+LimitSize=0
+ByteLimit=50
+[DebugChecksum]
+Checksum=364285708
+[Exceptions]
+StopOnUncaught=_ 0
+StopOnThrow=_ 0
+[CallStack]
+ShowArgs=0
+[Disassembly]
+MixedMode=1
+[SWOTraceHWSettings]
+OverrideDefaultClocks=0
+CpuClock=72000000
+ClockAutoDetect=0
+ClockWanted=2000000
+JtagSpeed=2000000
+Prescaler=36
+TimeStampPrescIndex=0
+TimeStampPrescData=0
+PcSampCYCTAP=1
+PcSampPOSTCNT=15
+PcSampIndex=0
+DataLogMode=0
+ITMportsEnable=0
+ITMportsTermIO=0
+ITMportsLogFile=0
+ITMlogFile=$PROJ_DIR$\ITM.log
+[JLinkDriver]
+CStepIntDis=_ 0
+TraceBufferSize=0x00010000
+TraceStallIfFIFOFull=0x00000000
+TracePortSize=0x00000004
+[Interrupts]
+Enabled=1
+[MemoryMap]
+Enabled=0
+Base=0
+UseAuto=0
+TypeViolation=1
+UnspecRange=1
+ActionState=1
+[Trace1]
+Enabled=0
+ShowSource=1
+[struct_types]
+Fmt0=FLSAH_FILE-nBlkStartIdx	4	0
+Fmt1=FORMAT07-nFrac	4	0
+Fmt2=FORMAT07-nIntg	4	0
+Fmt3=FORMAT11-nD1	4	0
+Fmt4=FORMAT11-nD2	4	0
+Fmt5=FORMAT11-nD3	4	0
+Fmt6=FORMAT11-nD4	4	0
+Fmt7=FORMAT25-nD1	4	0
+Fmt8=FORMAT25-nD2	4	0
+Fmt9=FORMAT25-nD3	4	0
+Fmt10=MEM_AC_CAL_PRM-nCheckSumReset	3	0
+Fmt11=MEM_AC_CAL_PRM-nPGActrl	4	0
+Fmt12=STD_TIME-nDay	4	0
+Fmt13=STD_TIME-nHour	4	0
+Fmt14=STD_TIME-nMin	4	0
+Fmt15=STD_TIME-nMon	4	0
+Fmt16=STD_TIME-nSec	4	0
+Fmt17=STD_TIME-nWeek	4	0
+Fmt18=STD_TIME-nYear	4	0
+Fmt19=struct _tagDATA_ITEM-nItemNum	4	0
+Fmt20=struct _tagDATA_ITEM-nProtItem	4	0
+Fmt21=struct _tagDATA_ITEM-nProtItem1	4	0
+Fmt22=struct _tagMEM_INFO-nTblId	4	0
+Fmt23=struct _tagRMOT_PARM-nLoginIntvl	3	0
+Fmt24=struct _tagRMOT_PARM-nOnlineType	3	0
+Fmt25=struct _tagRMOT_PARM-nWorkMode	3	0
+Fmt26=struct _tagSTD_TIME-nHour	4	0
+Fmt27=struct _tagSTD_TIME-nYear	4	0
+Fmt28=struct os_event-OSEventGrp	4	0
+Fmt29=struct os_event-OSEventType	4	0
+[array_types]
+Fmt0=INT16U[30]	4	0
+Fmt1=INT16U[320]	4	0
+Fmt2=INT32U[128]	3	0
+Fmt3=INT32U[12]	4	0
+Fmt4=INT32U[15]	3	0
+Fmt5=INT32U[3]	3	0
+Fmt6=INT8S[9]	4	0
+Fmt7=INT8U[100]	5	0
+Fmt8=INT8U[1025]	4	0
+Fmt9=INT8U[1026]	3	0
+Fmt10=INT8U[10]	4	0
+Fmt11=INT8U[11]	4	0
+Fmt12=INT8U[128]	5	0
+Fmt13=INT8U[1440]	4	0
+Fmt14=INT8U[16]	4	0
+Fmt15=INT8U[17]	4	0
+Fmt16=INT8U[255]	3	0
+Fmt17=INT8U[256]	4	0
+Fmt18=INT8U[2]	4	0
+Fmt19=INT8U[30]	4	0
+Fmt20=INT8U[4097]	4	0
+Fmt21=INT8U[4]	4	0
+Fmt22=INT8U[50]	4	0
+Fmt23=INT8U[5]	4	0
+Fmt24=INT8U[64]	3	0
+Fmt25=INT8U[6]	4	0
+Fmt26=INT8U[8192]	5	0
+Fmt27=uint16_t[16]	4	0
+Fmt28=uint8_t[11]	4	0
+Fmt29=uint8_t[50]	4	0
+Fmt30=unsigned char[10]	4	0
+Fmt31=unsigned char[20]	4	0
+Fmt32=unsigned int[240]	4	0
+[watch_formats]
+Fmt0={W}0:AD_Data_temp	3	0
+Fmt1={W}0:RegValue	4	0
+Fmt2={W}0:blue	4	0
+Fmt3={W}0:cnt2	3	0
+Fmt4={W}0:fData	4	0
+Fmt5={W}0:g_sEnetStateClr.bEnetCreatSerSockSucc	4	0
+Fmt6={W}0:green	4	0
+Fmt7={W}0:i	3	0
+Fmt8={W}0:iRet	3	0
+Fmt9={W}0:id	4	0
+Fmt10={W}0:iopin	4	0
+Fmt11={W}0:l_buff	4	2
+Fmt12={W}0:l_key_vel	4	0
+Fmt13={W}0:nAcEnegy[0]	4	0
+Fmt14={W}0:nBuf	4	0
+Fmt15={W}0:nChkSum	4	0
+Fmt16={W}0:nChkSum1	4	0
+Fmt17={W}0:nErr	4	0
+Fmt18={W}0:nFileId	4	0
+Fmt19={W}0:nFileInitFlg	4	0
+Fmt20={W}0:nFn	3	0
+Fmt21={W}0:nOI	4	0
+Fmt22={W}0:nRdFlags	4	0
+Fmt23={W}0:nRet	4	0
+Fmt24={W}0:nTmpBuf	4	2
+Fmt25={W}0:nType	4	0
+Fmt26={W}0:nnnnn	3	0
+Fmt27={W}0:pDataTable->nHFConst	3	0
+Fmt28={W}0:pJB_Param->nCheckSumEntire	4	0
+Fmt29={W}0:pJB_Param->nCheckSumReset	4	0
+Fmt30={W}0:pMeterInfo->nRdFlgs	4	0
+Fmt31={W}0:pWorkExt->nTypeSel	4	0
+Fmt32={W}0:ret	3	0
+Fmt33={W}0:sJbParam.nCheckSumReset	4	0
+Fmt34={W}0:signal	3	0
+Fmt35={W}0:temp	4	0
+[PowerLog]
+LogEnabled=0
+GraphEnabled=0
+ShowTimeLog=1
+ShowTimeSum=0
+Title0=I0
+Symbol0=0 4 1
+LiveEnabled=0
+LiveFile=PowerLogLive.log
+[DataLog]
+LogEnabled=0
+SumEnabled=0
+GraphEnabled=0
+ShowTimeLog=1
+ShowTimeSum=1
+[EventLog]
+LogEnabled=0
+SumEnabled=0
+GraphEnabled=0
+ShowTimeLog=1
+ShowTimeSum=1
+Title0=Ch0
+Symbol0=0 4 1
+Title1=Ch1
+Symbol1=0 4 1
+Title2=Ch2
+Symbol2=0 4 1
+Title3=Ch3
+Symbol3=0 4 1
+SumSortOrder=0
+[InterruptLog]
+LogEnabled=0
+SumEnabled=0
+GraphEnabled=0
+ShowTimeLog=1
+ShowTimeSum=1
+SumSortOrder=0
+[Log file]
+LoggingEnabled=_ 0
+LogFile=_ ""
+Category=_ 0
+[TermIOLog]
+LoggingEnabled=_ 0
+LogFile=_ ""
+[Trace2]
+Enabled=0
+ShowSource=0
+[SWOTraceWindow]
+PcSampling=0
+InterruptLogs=0
+ForcedTimeStamps=0
+EventCPI=0
+EventEXC=0
+EventFOLD=0
+EventLSU=0
+EventSLEEP=0
+[PowerProbe]
+Frequency=10000
+Probe0=I0
+ProbeSetup0=2 1 1 2 0 0
+[CallStackLog]
+Enabled=0
+[DriverProfiling]
+Enabled=0
+Mode=3
+Graph=0
+Symbiont=0
+Exclusions=
+[Disassemble mode]
+mode=0
+[Breakpoints2]
+Bp0=_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\main\Tool\Interface\Guimenu.c}.5069.1" 0 0 1 "" 0 "" 0
+Count=1
+[Aliases]
+A0=_ "D:\698仿真电表应用程序（220922）\698仿真电表应用程序（221014）\698仿真电表源码\698仿真电表VM1-20-51(220922)\common\startup_mb9bf21x.s" ""
+A1=_ "D:\698仿真电表应用程序（220922）\698仿真电表应用程序（221014）\698仿真电表源码\698仿真电表VM1-20-51(220922)\main\main.c" ""
+A2=_ "E:\yibang\works\Testtool_Shouchaoji\lib\MB9BF218S_Shouchaoji\main\comm\fifo.c" ""
+A3=_ "E:\yibang\works\Testtool_Shouchaoji\lib\MB9BF218S_Shouchaoji\main\comm\linkcom.c" ""
+A4=_ "E:\yibang\works\YB-FZZD-I-JZQ\Memlib\MB9BF218S_Shouchaoji\main\Mem\FlashFile.c" ""
+A5=_ "E:\yibang\works\YB-FZZD-I-JZQ\Memlib\MB9BF218S_Shouchaoji\main\Mem\MemDrv.c" ""
+A6=_ "F:\河南模组化\698仿真电表VM1-20-40(220625)\698仿真电表VM1-20-40(220623)\main\Disp\BU97950FUV.C" ""
+A7=_ "F:\河南模组化\698仿真电表VM1-20-40(220625)\698仿真电表VM1-20-40(220623)\source\FM24CL16.c" ""
+A8=_ "F:\河南模组化\698仿真电表应用程序（220607）\698仿真电表源码\698仿真电表VM1-20-38(220520)\main\main.c" ""
+A9=_ "F:\河南模组化\698仿真电表应用程序（220607）\698仿真电表源码\698仿真电表VM1-20-38(220520)\uCOS_II_V286\Source\os_core.c" ""
+A10=_ "F:\益邦\VM1-220-59(231206仿真电表)\698仿真电表源码VM1-20-59(231206)\main\main.c" ""
+Count=11
+SuppressDialog=0
