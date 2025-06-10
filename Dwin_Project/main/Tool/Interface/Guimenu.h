@@ -64,7 +64,7 @@ extern INT8S 		g_nTimeOut[10];					//超时时间
 extern INT8U  Data0[35];
 
 // 当前显示页面枚举
-typedef enum {
+typedef enum page{
     PAGE_HOME,
     PAGE_SETTINGS,
     PAGE_MONITOR,

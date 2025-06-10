@@ -270,13 +270,6 @@ INT32S WriteComm( INT8U port, INT8U *buffer, INT32U bufsize )
         //#endif        
         IrCommPwmOut( ENABLE );
 	}
-	else if((port == COMM6))
-	{
-        OSTimeDlyHMSM(0, 0, 0 , 25);
-		GpioSetOutput(IO_PORT4, IO_PINxC);	//初始为高电平状态
-        OSTimeDlyHMSM(0, 0, 0 , 10);
-        
-	}
 		
 	ret = CommPutStr( port, buffer, bufsize, OS_TICKS_PER_SEC*3 );
     if(port == COMM1)       				//ESAM  在发送完成后开启接收
@@ -299,12 +292,6 @@ INT32S WriteComm( INT8U port, INT8U *buffer, INT32U bufsize )
         //MFS_UART0RXEnable(MFS_Ch2);
         //#endif       
     }
-	else if((port == COMM6))				//485
-	{
-        OSTimeDlyHMSM(0, 0, 0 , 20);
-		GpioClearOutput(IO_PORT4, IO_PINxC);	
-        OSTimeDlyHMSM(0, 0, 0 , 10);
-	}
 
 	if( ret == UART_OK )
 		return (INT32S)bufsize;

@@ -43,6 +43,7 @@
 #include "SecTask.h"
 #include "PowerOn.h"
 #include "WiringProc.h"
+#include "Dwin.h"
 /**************************************************************************************************
                                            宏定义
 ***************************************************************************************************/
@@ -5324,6 +5325,7 @@ void DispTask(void *pData)
 // 根据当前页面更新LCD显示
 void updateLCDDisplay() 
 {
+	currentPage = (Page_Nsp)g_DwinPageID;
     switch (currentPage) {
         case PAGE_HOME:
             updateHomePage();      //主页面
@@ -5371,6 +5373,60 @@ void updateLCDDisplay()
     return l_ret;
 }
 
+
+typedef union
+{
+    FP32 	data;
+    INT32U 	pdata;
+}FloatLongType;
+
+//十六进制数组转化成浮点数
+float ByteToFloat(INT16U x, INT16U y)
+{
+    FloatLongType f1;
+    f1.pdata = x;
+    f1.pdata = (f1.pdata << 16)|y;
+    return  f1.data;	
+}
+
+//浮点数转化成十六进制数组
+void FloatToByte(FP32 floatNum,INT8U* byteoutputy)
+{
+    char* pchar = (char*)&floatNum;
+    for(int i=0; i < sizeof(float); i++)
+    {
+        *byteoutputy = *pchar;
+        pchar++;
+        byteoutputy++;
+    }
+}
+
+float hextofloat (unsigned int number) 
+{
+    //符号位
+    unsigned int sign = number >>31;
+    //幂数
+    int exponent = ((number >> 23) & 0xff) - 0x7F;
+    //尾数
+    unsigned int mantissa = number << 9; 
+    float value = 0; 
+    float mantissa2;
+    value = 0.5f;
+    mantissa2 = 0.0f; 
+    while (mantissa) 
+    {
+        if (mantissa & 0x80000000) 
+            mantissa2 += value; 
+        mantissa <<= 1; 
+        value *= 0.5f; 
+    }
+    value = (1.0f + mantissa2) * (pow (2, exponent)); 
+    if (sign) value = -value;
+    return value; 
+}
+
+
+
 /******************************************************************************
 *更新首页显示内容 
 *迪文屏ram变量地址存储空间使用范围：0x5000~0xffff；每个变量地址对应相应空间的2字节，对于字型（2字节）的指令或数据，总是采用高字节先传送的方式（MSB）；
@@ -5379,29 +5435,24 @@ void updateLCDDisplay()
 *电压V，电流A，功率kW，电能kWh，CPU温度的变量地址为：0x1120, 0x1150, 0x1180, 0x11B0, 0x1210； 数据: ASCII码具体长度根据数据位调整
 *用户号码，提示信息，“连接/断开”指示灯的变量地址为：0x10F0, 0x11E0, 0x1240；
 ******************************************************************************/
-void updateHomePage() {
-    INT8U  i;  
-    INT8U       Data[92]; 
-    INT8U       nBuf[2];
-    INT8U       nBuf1[10]; 
-    INT16U 		offset = 0,  crc = 0;
-	INT16U 		nAddr[14] = {0x1000,0x1030,0x1060,0x1090,0x10c0,0x10f0,0x1120,0x1150,0x1180,0x11b0,0x11e0,0x1210,0x1240};
-    INT8U dateTimeArray[8] = {0};
+void updateHomePage() 
+{
+    INT8U  		i = 0;  
+    INT8U       Data[92] 			= {0}; 
+    INT8U       nBuf[10] 			= {0}; 
+    INT16U 		offset 				= 0;
+	INT16U 		nAddr[14] 			= {0x1000,0x1030,0x1060,0x1090,0x10c0,0x10f0,0x1120,0x1150,0x1180,0x11b0,0x11e0,0x1210,0x1240};
+    INT8U dateTimeArray[8] 			= {0};
     STD_TIME        sTime;
 	INT8U displayDateTimeCmd[16];
-    // updateAvgVolt();
-    // updateAvgCurr();
-    // updateSumPwn();
-    // updateSumEnr();
 
-    // sendDataToLCD2();
-
+	//进线A的状态
     offset = 0;
     Data[offset++]=0x00; 
  
     if (wiringStatusBitmap & 0x01) 
 	{
-        Data[offset++] = 0x01;    //进线A的状态    
+        Data[offset++] = 0x01;        
     }    
     else   
 	{
@@ -5409,318 +5460,220 @@ void updateHomePage() {
 	}  
 	
 	offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[0],0x82);
-    //sendDataToLCD(nDateTime, offset); 
 	
     sendDataToLCD(Data, offset); // 发送进线A状态数据
 
-
+	OSTimeDlyHMSM(0,0,0,5);
+	
+	//显示进出线状态及相别_B  
 	memset(Data,0,sizeof(Data));
     offset = 0; // 重置偏移量
-    //显示进出线状态及相别_B   
 	Data[offset++]=0x00; 
-    if (wiringStatusBitmap & 0x02) {
+    if (wiringStatusBitmap & 0x02) 
+	{
         Data[offset++] = 0x01;    //进线B的状态    
     }    
-    else    
-		Data[offset++] = 0x00;  
+    else  
+	{
+		Data[offset++] = 0x00; 
+	}
 
     offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[1],0x82);
-    //sendDataToLCD(nDateTime, offset); 
 	
     sendDataToLCD(Data, offset); // 发送进线B状态数据
-
+	
+	OSTimeDlyHMSM(0,0,0,5);
+	
+	//显示进出线状态及相别_C  
 	memset(Data,0,sizeof(Data));
     offset = 0; // 重置偏移量
-    //显示进出线状态及相别_C   
-
     Data[offset++]=0x00; 
-
-    if (wiringStatusBitmap & 0x04) {
+    if (wiringStatusBitmap & 0x04) 
+	{
         Data[offset++] = 0x01;    //进线C的状态    
     }    
-    else    Data[offset++] = 0x00;  
+    else    
+	{
+		Data[offset++] = 0x00;  
+	}
 
-	offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[1],0x82);
-    //sendDataToLCD(nDateTime, offset); 
+	offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[2],0x82);
 	
     sendDataToLCD(Data, offset); // 发送进线C状态数据
-
+	
+	OSTimeDlyHMSM(0,0,0,5);
+	
+	//显示出线状态_出线 
 	memset(Data,0,sizeof(Data));
-
     offset = 0; // 重置偏移量
-    //显示出线状态_出线  
-
     Data[offset++]=0x00; 
-  
-    if (wiringStatusBitmap & 0x10) {
+    if (wiringStatusBitmap & 0x10) 
+	{
         Data[offset++] = 0x01;    //出线的状态    
     }    
-    else    
+    else
+	{
 		Data[offset++] = 0x00; 
+	}
 	
-    offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[1],0x82);
-    //sendDataToLCD(nDateTime, offset); 
-	
+    offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[3],0x82);
     sendDataToLCD(Data, offset);
+	OSTimeDlyHMSM(0,0,0,5);
+	
+	 //显示相别_出线  
 	memset(Data,0,sizeof(Data));
-
     offset = 0; // 重置偏移量
-    //显示相别_出线  
-
     Data[offset++]=0x00; 
-
-
     switch (wiringStatusBitmap & 0x0f)
     {
-    case 1:
-        Data[offset++]=0x01;      //A相
-        break;
-    case 2:
-        Data[offset++]=0x02;      //B相 
-        break;    
-    case 4:
-        Data[offset++]=0x03;      //C相 
-        break;            
-    default:
-        break;
+		case 1:
+			Data[offset++]=0x01;      //A相
+			break;
+		case 2:
+			Data[offset++]=0x02;      //B相 
+			break;    
+		case 4:
+			Data[offset++]=0x03;      //C相 
+			break;            
+		default:
+			break;
     }
 
-    offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[1],0x82);
-	
+    offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[4],0x82);
     sendDataToLCD(Data, offset);
+	
+	// 显示用户号码
+	OSTimeDlyHMSM(0,0,0,5);
+	memset(Data,0,sizeof(Data));
+    offset = 0; // 重置偏移量
+
+    Data[offset++] = 0x00;
+    Data[offset++] = 0x00;  
+    Data[offset++] = 0x00;
+    Data[offset++] = 0x17; 
+    Data[offset++] = 0x48;
+    Data[offset++] = 0x76;   
+    Data[offset++] = 0xE7;
+    Data[offset++] = 0xFF;
+  
+	offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[5],0x82);
+    sendDataToLCD(Data, offset);
+
+	// 显示电压
+	OSTimeDlyHMSM(0,0,0,5);
+	memset(Data,0,sizeof(Data));
+	memset(nBuf,0,sizeof(nBuf));
+    offset = 0; // 重置偏移量
+	memcpy(nBuf, &pDataTable->sRealInstant.sRealVolt[i], 2);
+    //test    
+    Data[offset++] = 0x43;    
+    Data[offset++] = 0x5c;    
+    Data[offset++] = 0x19;    
+    Data[offset++] = 0x9a;    
+
+	offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[6],0x82);
+    sendDataToLCD(Data, offset);  
+ 
+	OSTimeDlyHMSM(0,0,0,5);
+	memset(Data,0,sizeof(Data));
+    offset = 0; // 重置偏移量
+    // 显示电流 
+	memcpy(Data, &pDataTable->sRealInstant.sRealCurr[0], 3);
+    Data[offset++] = 0x44;    
+    Data[offset++] = 0x79;    
+    Data[offset++] = 0xFF;    
+    Data[offset++] = 0xF0;        
+    offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[7],0x82);
+    sendDataToLCD(Data, offset);  
+	
+	OSTimeDlyHMSM(0,0,0,5);
+	memset(Data,0,sizeof(Data));
+    offset = 0; // 重置偏移量
+    //显示功率 
+	memcpy(Data, &pDataTable->sRealInstant.sRealP[0], 3);
+    Data[offset++] = 0x42;    
+    Data[offset++] = 0xC7;    
+    Data[offset++] = 0xFF;    
+    Data[offset++] = 0xF3;    
+
+    offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[8],0x82);
+    sendDataToLCD(Data, offset);  
+	
+	OSTimeDlyHMSM(0,0,0,5);
 	memset(Data,0,sizeof(Data));
 
-
     offset = 0; // 重置偏移量
-    // 显示用户号码
-    INT8U displayUserNumCmd[16];
-    displayUserNumCmd[0] = 0x5A;
-    displayUserNumCmd[1] = 0xA5;
-    displayUserNumCmd[2] = 0x0D;             //数据长度      
-    displayUserNumCmd[3] = 0x82;
-    displayUserNumCmd[4] = 0x10;             //变量地址0x10F0
-    displayUserNumCmd[5] = 0xF0;
-    offset = 6;
-    displayUserNumCmd[offset++] = 0x00;
-    displayUserNumCmd[offset++] = 0x00;  
-    displayUserNumCmd[offset++] = 0x00;
-    displayUserNumCmd[offset++] = 0x17; 
-    displayUserNumCmd[offset++] = 0x48;
-    displayUserNumCmd[offset++] = 0x76;   
-    displayUserNumCmd[offset++] = 0xE7;
-    displayUserNumCmd[offset++] = 0xFF;
-  
-    // 计算CRC并发送
-    crc = crc16(&displayUserNumCmd[3],(offset-3));
-    displayUserNumCmd[offset++] = crc & 0xFF;
-    displayUserNumCmd[offset++] = (crc >> 8) & 0xFF;       
-    sendDataToLCD(displayUserNumCmd, offset);
+    //显示电量  
+	//memcpy(&nTempBuf[0], &sAcCombEnergy.sPPEnergy[i], sizeof(FORMAT11));
+    Data[offset++] = 0x41;    
+    Data[offset++] = 0x2E;    
+    Data[offset++] = 0x84;    
+    Data[offset++] = 0x7F;  
+    Data[offset++] = 0xFA;    
+    Data[offset++] = 0xE1;    
+    Data[offset++] = 0x47;  
+    Data[offset++] = 0xAE;
 
-
-    offset = 0; // 重置偏移量
-    // 显示电压
-    INT8U displayVoltageCmd[12];
-    displayVoltageCmd[0] = 0x5A;
-    displayVoltageCmd[1] = 0xA5;
-    displayVoltageCmd[2] = 0x09;          //数据长度
-    displayVoltageCmd[3] = 0x82;
-    displayVoltageCmd[4] = 0x11;          //变量地址0x1120
-    displayVoltageCmd[5] = 0x20;
-    offset = 6;
-/*
-    // 复制字符串的前 5 个字节到 displayVoltageCmd 数组
-    for (i = 0; i < 4 ; i++) 
-    {
-        displayVoltageCmd[offset++] = AvgorSumMeterData_Nsp.voltage[i];
-    }
-    // 计算CRC并发送
-
-*/  
-    //test    
-    displayVoltageCmd[offset++] = 0x43;    
-    displayVoltageCmd[offset++] = 0x5c;    
-    displayVoltageCmd[offset++] = 0x19;    
-    displayVoltageCmd[offset++] = 0x9a;    
-
-
-    crc = crc16(&displayVoltageCmd[3],(offset-3));
-    displayVoltageCmd[offset++] = crc & 0xFF;
-    displayVoltageCmd[offset++] = (crc >> 8) & 0xFF;     
-    sendDataToLCD(displayVoltageCmd, offset);    
- 
-
-    offset = 0; // 重置偏移量
-    // 显示电流
-    INT8U displayCurrentCmd[12];
-    displayCurrentCmd[0] = 0x5A;
-    displayCurrentCmd[1] = 0xA5;
-    displayCurrentCmd[2] = 0x09;          //数据长度 
-    displayCurrentCmd[3] = 0x82;
-    displayCurrentCmd[4] = 0x11;          //变量地址0x1150
-    displayCurrentCmd[5] = 0x50;
-    offset = 6;
-/*
-    for (i = 0; i < 4; i++) 
-    {
-        displayCurrentCmd[offset++] = AvgorSumMeterData_Nsp.current[i];    //电流(A)
-    }  
-*/     
-    //test    
-    displayCurrentCmd[offset++] = 0x44;    
-    displayCurrentCmd[offset++] = 0x79;    
-    displayCurrentCmd[offset++] = 0xFF;    
-    displayCurrentCmd[offset++] = 0xF0;        
-    
-    // 计算CRC并发送
-    crc = crc16(&displayCurrentCmd[3],(offset-3));
-    displayCurrentCmd[offset++] = crc & 0xFF;
-    displayCurrentCmd[offset++] = (crc >> 8) & 0xFF;        
-    sendDataToLCD(displayCurrentCmd, offset);    
-
-    
-    offset = 0; // 重置偏移量
-    //显示功率
-    INT8U displayPowerCmd[12];
-    displayPowerCmd[0] = 0x5A;
-    displayPowerCmd[1] = 0xA5;
-    displayPowerCmd[2] = 0x09;          //数据长度 
-    displayPowerCmd[3] = 0x82;
-    displayPowerCmd[4] = 0x11;          //变量地址0x1180
-    displayPowerCmd[5] = 0x80;
-    offset = 6;
-/*    
-    for (i = 0; i < 4; i++) 
-    {
-        displayPowerCmd[offset++] = AvgorSumMeterData_Nsp.power[i];    //电流(A)
-    } 
-*/    
-    //test    
-    displayPowerCmd[offset++] = 0x42;    
-    displayPowerCmd[offset++] = 0xC7;    
-    displayPowerCmd[offset++] = 0xFF;    
-    displayPowerCmd[offset++] = 0xF3;    
-
-    // 计算CRC并发送
-    crc = crc16(&displayPowerCmd[3],(offset-3));
-    displayPowerCmd[offset++] = crc & 0xFF;
-    displayPowerCmd[offset++] = (crc >> 8) & 0xFF;       
-    sendDataToLCD(displayPowerCmd, offset);    
-
-
-
-    offset = 0; // 重置偏移量
-    //显示电量
-    INT8U displayEnergyCmd[16];
-    displayEnergyCmd[0] = 0x5A;
-    displayEnergyCmd[1] = 0xA5;
-    displayEnergyCmd[2] = 0x0D;          //数据长度 
-    displayEnergyCmd[3] = 0x82;
-    displayEnergyCmd[4] = 0x11;          //变量地址0x11B0
-    displayEnergyCmd[5] = 0xB0;
-    offset = 6;
-/* 
-    for (i = 0; i < 9 && AvgorSumMeterData_Nsp.energy[i] != '\0'; i++) 
-    {
-        displayEnergyCmd[offset++] = AvgorSumMeterData_Nsp.energy[i];    //电量(kWh)
-    } 
-*/ 
-    //test    
-    displayEnergyCmd[offset++] = 0x41;    
-    displayEnergyCmd[offset++] = 0x2E;    
-    displayEnergyCmd[offset++] = 0x84;    
-    displayEnergyCmd[offset++] = 0x7F;  
-    displayEnergyCmd[offset++] = 0xFA;    
-    displayEnergyCmd[offset++] = 0xE1;    
-    displayEnergyCmd[offset++] = 0x47;  
-    displayEnergyCmd[offset++] = 0xAE;
-
-    // 计算CRC并发送
-    crc = crc16(&displayEnergyCmd[3],(offset-3));
-    displayEnergyCmd[offset++] = crc & 0xFF;
-    displayEnergyCmd[offset++] = (crc >> 8) & 0xFF;           
-    sendDataToLCD(displayEnergyCmd, offset);    
-
-
+    offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[9],0x82);
+    sendDataToLCD(Data, offset);  
+	
+	OSTimeDlyHMSM(0,0,0,5);
+	memset(Data,0,sizeof(Data));
+	
     offset = 0; // 重置偏移量
     //显示提示信息
-    INT8U displayHintInfoCmd[12];
-    displayHintInfoCmd[0] = 0x5A;
-    displayHintInfoCmd[1] = 0xA5;
-    displayHintInfoCmd[2] = 0x09;          //数据长度 
-    displayHintInfoCmd[3] = 0x82;
-    displayHintInfoCmd[4] = 0x11;          //变量地址0x11E0
-    displayHintInfoCmd[5] = 0xE0;
-    offset = 6;
-    
 #if 1
     //test 工作
-    displayHintInfoCmd[offset++] = 0xB9;    
-    displayHintInfoCmd[offset++] = 0xA4; 
-    displayHintInfoCmd[offset++] = 0xD7;    
-    displayHintInfoCmd[offset++] = 0xF7;      
+    Data[offset++] = 0xB9;    
+    Data[offset++] = 0xA4; 
+    Data[offset++] = 0xD7;    
+    Data[offset++] = 0xF7;      
 #else
     //test 空闲
-    displayHintInfoCmd[offset++] = 0xbf;    
-    displayHintInfoCmd[offset++] = 0xd5; 
-    displayHintInfoCmd[offset++] = 0xcf;    
-    displayHintInfoCmd[offset++] = 0xd0;    
+    Data[offset++] = 0xbf;    
+    Data[offset++] = 0xd5; 
+    Data[offset++] = 0xcf;    
+    Data[offset++] = 0xd0;    
 #endif
     // 计算CRC并发送
-    crc = crc16(&displayHintInfoCmd[3],(offset-3));
-    displayHintInfoCmd[offset++] = crc & 0xFF;
-    displayHintInfoCmd[offset++] = (crc >> 8) & 0xFF;            
-    sendDataToLCD(displayHintInfoCmd, offset);    
+    offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[10],0x82);
+    sendDataToLCD(Data, offset);  
+	
+	OSTimeDlyHMSM(0,0,0,5);
+	memset(Data,0,sizeof(Data));   
 
     offset = 0; // 重置偏移量
     //显示CPU温度
-    INT8U displayCpuTempCmd[12];
-    displayCpuTempCmd[0] = 0x5A;
-    displayCpuTempCmd[1] = 0xA5;
-    displayCpuTempCmd[2] = 0x09;          //数据长度 
-    displayCpuTempCmd[3] = 0x82;
-    displayCpuTempCmd[4] = 0x12;          //变量地址0x1210
-    displayCpuTempCmd[5] = 0x10;
-    offset = 6;
-    //test
-    displayCpuTempCmd[offset++] = 0x44;
-    displayCpuTempCmd[offset++] = 0x79;    
-    displayCpuTempCmd[offset++] = 0xF9; 
-    displayCpuTempCmd[offset++] = 0x9A;        
+    Data[offset++] = 0x44;
+    Data[offset++] = 0x79;    
+    Data[offset++] = 0xF9; 
+    Data[offset++] = 0x9A;        
     
-    // 计算CRC并发送
-    crc = crc16(&displayCpuTempCmd[3],(offset-3));
-    displayCpuTempCmd[offset++] = crc & 0xFF;
-    displayCpuTempCmd[offset++] = (crc >> 8) & 0xFF;            
-    sendDataToLCD(displayCpuTempCmd, offset);   
-
+    offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[11],0x82);
+    sendDataToLCD(Data, offset);  
+	
+	OSTimeDlyHMSM(0,0,0,5);
+	memset(Data,0,sizeof(Data));   
 
     offset = 0; // 重置偏移量
     //显示连接状态
-    INT8U displayLinkstatCmd[10];
-    displayLinkstatCmd[0] = 0x5A;
-    displayLinkstatCmd[1] = 0xA5;
-    displayLinkstatCmd[2] = 0x07;          //数据长度 
-    displayLinkstatCmd[3] = 0x82;
-    displayLinkstatCmd[4] = 0x12;          //变量地址0x1240
-    displayLinkstatCmd[5] = 0x40;
-    offset = 6;
-    displayLinkstatCmd[offset++] = 0x00;
 /*    
     displayLinkstatCmd[offset++] = GlbHmPgInf_Nsp.ConStaus;    //“连接/断开”指示灯   
 */
+	Data[offset++] = 0x00; 
 #if 1
     //test
-    displayLinkstatCmd[offset++] = 0x01;    //“连接”指示灯
+    Data[offset++] = 0x01;    //“连接”指示灯
 #else
     //test
-    displayLinkstatCmd[offset++] = 0x00;    //“断开”指示灯
+    Data[offset++] = 0x00;    //“断开”指示灯
 #endif
 
-    // 计算CRC并发送
-    crc = crc16(&displayLinkstatCmd[3],(offset-3));
-    displayLinkstatCmd[offset++] = crc & 0xFF;
-    displayLinkstatCmd[offset++] = (crc >> 8) & 0xFF;        
-    sendDataToLCD(displayLinkstatCmd, offset);   
+    offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[12],0x82);
+    sendDataToLCD(Data, offset);  
+	
+	//OSTimeDlyHMSM(0,0,0,5);
+	//memset(Data,0,sizeof(Data));  
 
 
 

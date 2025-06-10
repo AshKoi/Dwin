@@ -224,7 +224,7 @@ Exclusions=
 [Disassemble mode]
 mode=0
 [Breakpoints2]
-Bp0=_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\main\Tool\Interface\Guimenu.c}.5069.1" 0 0 1 "" 0 "" 0
+Bp0=_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\main\Tool\Interface\Guimenu.c}.5070.1" 0 0 1 "" 0 "" 0
 Count=1
 [Aliases]
 A0=_ "D:\698仿真电表应用程序（220922）\698仿真电表应用程序（221014）\698仿真电表源码\698仿真电表VM1-20-51(220922)\common\startup_mb9bf21x.s" ""

@@ -4,6 +4,8 @@
 #include "ChkCrc.h"
 
 
+INT8U       g_DwinPageID = 0;
+
 //迪文屏函数
 /********************************************************************************
 * 函数名:DwinMakeFrm
@@ -181,6 +183,98 @@ INT32S DwinAsynProc(void* pPara)
   END:
 	// 处理结束后，清处理
 	LINK_COM_FRAME_CLR ;
+	
+	return nRet;
+}
+
+/*
+*****************************************************************************
+* 函数名: DwinAsynProc
+* 输　入: 
+*		pLINK_COM pLinkCom
+* 输  出: 
+* 返  回: 
+*		0成功，-1失败
+*       
+*       
+* 功  能: 有完整帧，返回0成功，否则-1
+*****************************************************************************
+*/
+
+INT8U DwinAnalyse(const INT8U *pValidData,INT32U nValidLen,INT8U *pSendData)
+{
+	INT8U 	nCtrlCode 				= 0;
+	INT8U	nSendLen 				= 0;
+	
+	nCtrlCode = pValidData[4];
+	
+	switch(nCtrlCode)
+	{
+		case 0x80: 							//访问寄存器	写入数据
+			break;
+		case 0x81:							//读取数据
+			break;
+		case 0x82:							//访问变量存储器（RAM） 写入数据
+			break;
+		case 0x83:							//读取数据
+			nSendLen = DwinCode83(pValidData, nValidLen, pSendData);
+			break;
+			
+		default:
+			nSendLen = 0;
+		break;	
+	}
+	
+	
+	return nSendLen;
+}
+
+/*
+*****************************************************************************
+* 函数名: DwinAsynProc
+* 输　入: 
+*		pLINK_COM pLinkCom
+* 输  出: 
+* 返  回: 
+*		0成功，-1失败
+*       
+*       
+* 功  能: 有完整帧，返回0成功，否则-1
+*****************************************************************************
+*/
+INT8S DwinCode83(const INT8U *pValidBuf, INT8U nValidLen, INT8U *pSendBuf)
+{
+	//INT8U 	nPageID 				= 0;
+	INT16U 	nVdxx 					= 0;
+	INT8S   nRet					= 0;
+	
+	nVdxx = ((pValidBuf[4]<<8)|pValidBuf[5]);
+	
+	switch(nVdxx)
+	{
+		case 0x009C:										//日期时间
+			break;
+		case 0x5000:										//主页面
+			g_DwinPageID = ((pValidBuf[7]<<8)|pValidBuf[8]);
+			nRet = 0;
+			break;
+		case 0x1270:										//报警电流
+			break;
+		case 0x12A0:										//报警温度
+			break;
+		case 0x12D0:										//报警温升
+			break;
+		case 0x1300:										//切断电流
+			break;
+		case 0x1330:										//切断温度
+			break;                                          
+		case 0x1360:										//切断温升
+			break;                                          
+		case 0x1390:                                        //检测开关
+			break;
+		case 0x5030:										//存储
+			break;
+	}
 	
 	return nRet;
 }
