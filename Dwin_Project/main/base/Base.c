@@ -786,7 +786,7 @@ INT32U Bcdbuf2Long(const INT8U* pBuf, INT8U nLen)
 * ·µ  »Ø:
 * ¹¦  ÄÜ:
 *********************************************************************************/
-INT8S Long2Buf(INT8U *pBuf, INT32U nVal, INT8U nLen)
+INT8S Long2Buf(INT8U *pBuf, INT64U nVal, INT8U nLen)
 {
 	INT8U i 	= 0;
 	INT8U nTmp	= 0;

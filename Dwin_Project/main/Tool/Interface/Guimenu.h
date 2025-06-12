@@ -67,10 +67,10 @@ extern INT8U  Data0[35];
 typedef enum page{
     PAGE_HOME,
     PAGE_SETTINGS,
-    PAGE_MONITOR,
-    PAGE_SCANNER,
     PAGE_STORAGE,
-    PAGE_DATETIME
+    PAGE_DATETIME,
+    PAGE_MONITOR,
+    PAGE_SCANNER    
 } Page_Nsp;
 
 /**************************************************************************************************
@@ -78,7 +78,8 @@ typedef enum page{
 ***************************************************************************************************/
 void updateLCDDisplay();
 void updateHomePage();
-
+void updateSettingsPage();
+void updateMonitorPage();
 
 
 

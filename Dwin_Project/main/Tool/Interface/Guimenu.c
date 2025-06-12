@@ -5332,7 +5332,7 @@ void updateLCDDisplay()
             break;
 
         case PAGE_SETTINGS:
-            //updateSettingsPage();  //设置页面
+            updateSettingsPage();  //设置页面
             break;
 
         case PAGE_STORAGE:
@@ -5342,14 +5342,14 @@ void updateLCDDisplay()
         case PAGE_DATETIME:
             //updateDatetimePage();  //日期时间页面
             break;
-            
+        case PAGE_MONITOR:
+            updateMonitorPage();  //电参数监视页面
+            break;    
         case PAGE_SCANNER:
             //updateScannerPage();  //扫码页面
             break;
 
-        case PAGE_MONITOR:
-            //updateMonitorPage();  //电参数监视页面
-            break;
+        
 
         default:
             break;
@@ -5361,7 +5361,7 @@ void updateLCDDisplay()
  // 向液晶屏发送数据
  INT8U sendDataToLCD(INT8U* pData, INT32S nDatalen) {
     INT8U	l_ret = 0;
-    INT8U   nCom = COMM6;  // 对应串口 COMM6:  P15--UART0_TX, P14--UART0_RX  
+    INT8U   nCom = COMM_232;  // 对应串口 COMM7:  P15--UART0_TX, P14--UART0_RX  
 
     if ((NULL == pData) || (nDatalen < 0) ) {
         return -1;
@@ -5374,56 +5374,62 @@ void updateLCDDisplay()
 }
 
 
-typedef union
-{
-    FP32 	data;
-    INT32U 	pdata;
-}FloatLongType;
+// 十进制整数转IEEE 754单精度float的编码（以uint32_t返回）
+INT32U int_to_ieee754(int n) {
+    if(n == 0) return 0; // 浮点数0的编码
 
-//十六进制数组转化成浮点数
-float ByteToFloat(INT16U x, INT16U y)
-{
-    FloatLongType f1;
-    f1.pdata = x;
-    f1.pdata = (f1.pdata << 16)|y;
-    return  f1.data;	
-}
-
-//浮点数转化成十六进制数组
-void FloatToByte(FP32 floatNum,INT8U* byteoutputy)
-{
-    char* pchar = (char*)&floatNum;
-    for(int i=0; i < sizeof(float); i++)
+    // Step 1: 符号位
+    INT32U sign = 0;
+    if (n < 0) 
     {
-        *byteoutputy = *pchar;
-        pchar++;
-        byteoutputy++;
+        sign = 1;
+        n = -n;
     }
+
+    // Step 2: 找到最高位1所在的bit（即指数）
+    int exponent = 0;
+    int temp = n;
+    while (temp >>= 1) exponent++;
+
+    // Step 3: 计算尾数
+    // 去掉最高位的那个1，其余位左移到23位
+    INT32U mantissa = ((INT32U)n & ((1U << exponent) - 1)) << (23 - exponent);
+
+    // Step 4: 指数编码（加偏移量127）
+    INT32U exp_encoded = exponent + 127;
+
+    // Step 5: 组合
+    INT32U ieee = (sign << 31) | (exp_encoded << 23) | mantissa;
+    return ieee;
 }
 
-float hextofloat (unsigned int number) 
-{
-    //符号位
-    unsigned int sign = number >>31;
-    //幂数
-    int exponent = ((number >> 23) & 0xff) - 0x7F;
-    //尾数
-    unsigned int mantissa = number << 9; 
-    float value = 0; 
-    float mantissa2;
-    value = 0.5f;
-    mantissa2 = 0.0f; 
-    while (mantissa) 
-    {
-        if (mantissa & 0x80000000) 
-            mantissa2 += value; 
-        mantissa <<= 1; 
-        value *= 0.5f; 
+INT64U int_to_ieee754_double(int n) {
+    if (n == 0) return 0; // 0的编码
+
+    // Step 1: 符号位
+    INT64U sign = 0;
+    if (n < 0) {
+        sign = 1;
+        n = -n;
     }
-    value = (1.0f + mantissa2) * (pow (2, exponent)); 
-    if (sign) value = -value;
-    return value; 
+
+    // Step 2: 找到最高位1所在的bit（即指数）
+    int exponent = 0;
+    int temp = n;
+    while (temp >>= 1) exponent++;
+
+    // Step 3: 计算尾数
+    // 去掉最高位的那个1，其余位左移到52位
+    INT64U mantissa = ((INT64U)n & ((1ULL << exponent) - 1)) << (52 - exponent);
+
+    // Step 4: 指数编码（加偏移量1023）
+    INT64U exp_encoded = exponent + 1023;
+
+    // Step 5: 组合
+    INT64U ieee = (sign << 63) | (exp_encoded << 52) | mantissa;
+    return ieee;
 }
+
 
 
 
@@ -5442,9 +5448,18 @@ void updateHomePage()
     INT8U       nBuf[10] 			= {0}; 
     INT16U 		offset 				= 0;
 	INT16U 		nAddr[14] 			= {0x1000,0x1030,0x1060,0x1090,0x10c0,0x10f0,0x1120,0x1150,0x1180,0x11b0,0x11e0,0x1210,0x1240};
-    INT8U dateTimeArray[8] 			= {0};
+    INT8U       dateTimeArray[8] 	= {0};
     STD_TIME        sTime;
-	INT8U displayDateTimeCmd[16];
+	INT8U       displayDateTimeCmd[16];
+    INT8U       nTempBuf[50];
+    INT8U       nStatus             = 0;
+    INT32U      nConvert            = 0;
+    INT32U      nNum                = 0;
+    INT64U      nValue            = 0;
+    
+    MT_DGN_C_ENERGY_DATA sAcCombEnergy;
+    
+    MemReadAcRealData(F5, &sAcCombEnergy.sPPEnergy[0], sizeof(sAcCombEnergy));
 
 	//进线A的状态
     offset = 0;
@@ -5459,7 +5474,7 @@ void updateHomePage()
 		Data[offset++] = 0x00;   
 	}  
 	
-	offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[0],0x82);
+	offset = DwinMakeFrm(&Data[0],offset,nAddr[0],0x82);
 	
     sendDataToLCD(Data, offset); // 发送进线A状态数据
 
@@ -5478,7 +5493,7 @@ void updateHomePage()
 		Data[offset++] = 0x00; 
 	}
 
-    offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[1],0x82);
+    offset = DwinMakeFrm(&Data[0],offset,nAddr[1],0x82);
 	
     sendDataToLCD(Data, offset); // 发送进线B状态数据
 	
@@ -5497,7 +5512,7 @@ void updateHomePage()
 		Data[offset++] = 0x00;  
 	}
 
-	offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[2],0x82);
+	offset = DwinMakeFrm(&Data[0],offset,nAddr[2],0x82);
 	
     sendDataToLCD(Data, offset); // 发送进线C状态数据
 	
@@ -5516,7 +5531,7 @@ void updateHomePage()
 		Data[offset++] = 0x00; 
 	}
 	
-    offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[3],0x82);
+    offset = DwinMakeFrm(&Data[0],offset,nAddr[3],0x82);
     sendDataToLCD(Data, offset);
 	OSTimeDlyHMSM(0,0,0,5);
 	
@@ -5524,7 +5539,8 @@ void updateHomePage()
 	memset(Data,0,sizeof(Data));
     offset = 0; // 重置偏移量
     Data[offset++]=0x00; 
-    switch (wiringStatusBitmap & 0x0f)
+    nStatus = wiringStatusBitmap & 0x0f;
+    switch (nStatus)
     {
 		case 1:
 			Data[offset++]=0x01;      //A相
@@ -5536,10 +5552,11 @@ void updateHomePage()
 			Data[offset++]=0x03;      //C相 
 			break;            
 		default:
+            Data[offset++]=0x00;      //？
 			break;
     }
 
-    offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[4],0x82);
+    offset = DwinMakeFrm(&Data[0],offset,nAddr[4],0x82);
     sendDataToLCD(Data, offset);
 	
 	// 显示用户号码
@@ -5556,7 +5573,7 @@ void updateHomePage()
     Data[offset++] = 0xE7;
     Data[offset++] = 0xFF;
   
-	offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[5],0x82);
+	offset = DwinMakeFrm(&Data[0],offset,nAddr[5],0x82);
     sendDataToLCD(Data, offset);
 
 	// 显示电压
@@ -5564,26 +5581,37 @@ void updateHomePage()
 	memset(Data,0,sizeof(Data));
 	memset(nBuf,0,sizeof(nBuf));
     offset = 0; // 重置偏移量
-	memcpy(nBuf, &pDataTable->sRealInstant.sRealVolt[i], 2);
+	//memcpy(nBuf, &pDataTable->sRealInstant.sRealVolt[i], 2);
+    nConvert = Bcdbuf2Long(&pDataTable->sRealInstant.sRealVolt[i].nFrac, 2);
+    nConvert = 220;
+    nNum = int_to_ieee754(nConvert);
     //test    
-    Data[offset++] = 0x43;    
-    Data[offset++] = 0x5c;    
-    Data[offset++] = 0x19;    
-    Data[offset++] = 0x9a;    
+    Data[offset++] = (nNum>>24)&0xFF;    
+    Data[offset++] = (nNum>>16)&0xFF;    
+    Data[offset++] = (nNum>>8)&0xFF;    
+    Data[offset++] = nNum&0xFF;    
 
-	offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[6],0x82);
+	offset = DwinMakeFrm(&Data[0],offset,nAddr[6],0x82);
     sendDataToLCD(Data, offset);  
  
 	OSTimeDlyHMSM(0,0,0,5);
 	memset(Data,0,sizeof(Data));
     offset = 0; // 重置偏移量
     // 显示电流 
-	memcpy(Data, &pDataTable->sRealInstant.sRealCurr[0], 3);
-    Data[offset++] = 0x44;    
-    Data[offset++] = 0x79;    
-    Data[offset++] = 0xFF;    
-    Data[offset++] = 0xF0;        
-    offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[7],0x82);
+	//memcpy(Data, &pDataTable->sRealInstant.sRealCurr[0], 3);
+    nConvert = Bcdbuf2Long(&pDataTable->sRealInstant.sRealCurr[0].nD1, 3); 
+    nConvert = 220;
+    nNum = int_to_ieee754(nConvert);
+    memset(nTempBuf, 0, sizeof(nTempBuf));
+    Long2Buf(nTempBuf, nNum, 4);
+    ReverseOutput(nTempBuf,Data, 4);
+    /*//test    
+    Data[offset++] = (nNum>>24)&0xFF;    
+    Data[offset++] = (nNum>>16)&0xFF;    
+    Data[offset++] = (nNum>>8)&0xFF;    
+    Data[offset++] = nNum&0xFF;*/
+    offset = 4;  
+    offset = DwinMakeFrm(&Data[0],offset,nAddr[7],0x82);
     sendDataToLCD(Data, offset);  
 	
 	OSTimeDlyHMSM(0,0,0,5);
@@ -5591,12 +5619,14 @@ void updateHomePage()
     offset = 0; // 重置偏移量
     //显示功率 
 	memcpy(Data, &pDataTable->sRealInstant.sRealP[0], 3);
-    Data[offset++] = 0x42;    
-    Data[offset++] = 0xC7;    
-    Data[offset++] = 0xFF;    
-    Data[offset++] = 0xF3;    
+    nConvert = Bcdbuf2Long(&pDataTable->sRealInstant.sRealP[i].nFrac0, 3);
+    memset(nTempBuf, 0, sizeof(nTempBuf));
+    nNum = int_to_ieee754(nConvert);
+    Long2Buf(nTempBuf, nNum, 4);
+    ReverseOutput(nTempBuf, Data, 4);
+    offset += 4;  
 
-    offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[8],0x82);
+    offset = DwinMakeFrm(&Data[0],offset,nAddr[8],0x82);
     sendDataToLCD(Data, offset);  
 	
 	OSTimeDlyHMSM(0,0,0,5);
@@ -5605,16 +5635,14 @@ void updateHomePage()
     offset = 0; // 重置偏移量
     //显示电量  
 	//memcpy(&nTempBuf[0], &sAcCombEnergy.sPPEnergy[i], sizeof(FORMAT11));
-    Data[offset++] = 0x41;    
-    Data[offset++] = 0x2E;    
-    Data[offset++] = 0x84;    
-    Data[offset++] = 0x7F;  
-    Data[offset++] = 0xFA;    
-    Data[offset++] = 0xE1;    
-    Data[offset++] = 0x47;  
-    Data[offset++] = 0xAE;
+    nValue = Bcdbuf2Long(&sAcCombEnergy.sPPEnergy[0].nD1, sizeof(FORMAT11));
+    nValue  = 2200;
+    nValue = int_to_ieee754_double(nValue);
+    Long2Buf(nTempBuf, nValue, 8);
+    ReverseOutput(nTempBuf,Data, 8);
+    offset += 8;
 
-    offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[9],0x82);
+    offset = DwinMakeFrm(&Data[0],offset,nAddr[9],0x82);
     sendDataToLCD(Data, offset);  
 	
 	OSTimeDlyHMSM(0,0,0,5);
@@ -5636,7 +5664,7 @@ void updateHomePage()
     Data[offset++] = 0xd0;    
 #endif
     // 计算CRC并发送
-    offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[10],0x82);
+    offset = DwinMakeFrm(&Data[0],offset,nAddr[10],0x82);
     sendDataToLCD(Data, offset);  
 	
 	OSTimeDlyHMSM(0,0,0,5);
@@ -5649,7 +5677,7 @@ void updateHomePage()
     Data[offset++] = 0xF9; 
     Data[offset++] = 0x9A;        
     
-    offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[11],0x82);
+    offset = DwinMakeFrm(&Data[0],offset,nAddr[11],0x82);
     sendDataToLCD(Data, offset);  
 	
 	OSTimeDlyHMSM(0,0,0,5);
@@ -5661,15 +5689,17 @@ void updateHomePage()
     displayLinkstatCmd[offset++] = GlbHmPgInf_Nsp.ConStaus;    //“连接/断开”指示灯   
 */
 	Data[offset++] = 0x00; 
-#if 1
-    //test
-    Data[offset++] = 0x01;    //“连接”指示灯
-#else
-    //test
-    Data[offset++] = 0x00;    //“断开”指示灯
-#endif
+    
+    if(g_pKeySamp->nKeyValBak == 0x01)
+    {
+       Data[offset++] = 0x01;    //“连接”指示灯 
+    }
+    else
+    {
+        Data[offset++] = 0x00;    //“断开”指示灯
+    }
 
-    offset = DwinMakeFrm(&Data[0],offset,(INT8U*)nAddr[12],0x82);
+    offset = DwinMakeFrm(&Data[0],offset,nAddr[12],0x82);
     sendDataToLCD(Data, offset);  
 	
 	//OSTimeDlyHMSM(0,0,0,5);
@@ -5679,8 +5709,138 @@ void updateHomePage()
 
 }
 
+void updateSettingsPage()
+{
+    
+}
 
+//电参数界面
+void updateMonitorPage()
+{
+    INT8U  		i = 0;  
+    INT8U       Data[92] 			= {0}; 
+    INT8U       nBuf[10] 			= {0}; 
+    INT16U 		offset 				= 0;
+	INT16U 		nAddr[14] 			= {0x1000,0x1030,0x1060,0x1090,0x10c0,0x10f0,0x1120,0x1150,0x1180,0x11b0,0x11e0,0x1210,0x1240};
+    INT8U       dateTimeArray[8] 	= {0};
+    STD_TIME        sTime;
+	INT8U       displayDateTimeCmd[16];
+    INT8U       nTempBuf[50];
+    INT8U       nStatus             = 0;
+    INT32U      nConvert            = 0;
+    INT32U      nNum                = 0;
+    INT64U      nValue            = 0;
+    
+    MT_DGN_C_ENERGY_DATA sAcCombEnergy;
+    
+    MemReadAcRealData(F5, &sAcCombEnergy.sPPEnergy[0], sizeof(sAcCombEnergy));
+    
+    // 电压
+	memset(Data,0,sizeof(Data));
+	memset(nBuf,0,sizeof(nBuf));
+    
+    offset = 0; // 重置偏移量
+    nConvert = Bcdbuf2Long(&pDataTable->sRealInstant.sRealVolt[i].nFrac, 2);
+    nConvert = 220;
+    nNum = int_to_ieee754(nConvert);  
+	offset = DwinMakeFrm(&Data[0],offset,nAddr[6],0x82);
+    sendDataToLCD(Data, offset);  
+ 
+	OSTimeDlyHMSM(0,0,0,5);
+	memset(Data,0,sizeof(Data));
+    offset = 0; // 重置偏移量
+    // 电流 
+	//memcpy(Data, &pDataTable->sRealInstant.sRealCurr[0], 3);
+    nConvert = Bcdbuf2Long(&pDataTable->sRealInstant.sRealCurr[0].nD1, 3); 
+    nConvert = 220;
+    nNum = int_to_ieee754(nConvert);
+    memset(nTempBuf, 0, sizeof(nTempBuf));
+    Long2Buf(nTempBuf, nNum, 4);
+    ReverseOutput(nTempBuf,Data, 4);
+    /*//test    
+    Data[offset++] = (nNum>>24)&0xFF;    
+    Data[offset++] = (nNum>>16)&0xFF;    
+    Data[offset++] = (nNum>>8)&0xFF;    
+    Data[offset++] = nNum&0xFF;*/
+    offset = 4;  
+    offset = DwinMakeFrm(&Data[0],offset,nAddr[7],0x82);
+    sendDataToLCD(Data, offset);  
+	
+	OSTimeDlyHMSM(0,0,0,5);
+	memset(Data,0,sizeof(Data));
+    offset = 0; // 重置偏移量
+    //功率 
+	memcpy(Data, &pDataTable->sRealInstant.sRealP[0], 3);
+    nConvert = Bcdbuf2Long(&pDataTable->sRealInstant.sRealP[i].nFrac0, 3);
+    memset(nTempBuf, 0, sizeof(nTempBuf));
+    nNum = int_to_ieee754(nConvert);
+    Long2Buf(nTempBuf, nNum, 4);
+    ReverseOutput(nTempBuf, Data, 4);
+    offset += 4;  
 
+    offset = DwinMakeFrm(&Data[0],offset,nAddr[8],0x82);
+    sendDataToLCD(Data, offset);  
+	
+	OSTimeDlyHMSM(0,0,0,5);
+	memset(Data,0,sizeof(Data));
+
+    offset = 0; // 重置偏移量
+    //显示电量  
+	//memcpy(&nTempBuf[0], &sAcCombEnergy.sPPEnergy[i], sizeof(FORMAT11));
+    nValue = Bcdbuf2Long(&sAcCombEnergy.sPPEnergy[0].nD1, sizeof(FORMAT11));
+    nValue  = 2200;
+    nValue = int_to_ieee754_double(nValue);
+    Long2Buf(nTempBuf, nValue, 8);
+    ReverseOutput(nTempBuf,Data, 8);
+    offset += 8;
+
+    offset = DwinMakeFrm(&Data[0],offset,nAddr[9],0x82);
+    sendDataToLCD(Data, offset);  
+	
+	OSTimeDlyHMSM(0,0,0,5);
+	memset(Data,0,sizeof(Data));
+    
+    offset = 0;
+    //功率因数
+	memcpy(Data, &pDataTable->sRealInstant.sRealPf[0], 2);
+    nConvert = Bcdbuf2Long(&pDataTable->sRealInstant.sRealPf[0].nFrac, 2);
+    memset(nTempBuf, 0, sizeof(nTempBuf));
+    nNum = int_to_ieee754(nConvert);
+    Long2Buf(nTempBuf, nNum, 4);
+    ReverseOutput(nTempBuf, Data, 4);
+    offset += 4;  
+
+    offset = DwinMakeFrm(&Data[0],offset,nAddr[8],0x82);
+    sendDataToLCD(Data, offset);  
+	
+	OSTimeDlyHMSM(0,0,0,5);
+	memset(Data,0,sizeof(Data));
+    
+    //CO2排量
+    
+    //温度
+    offset = 0;
+    memcpy(Data, &pDataTable->sTpSlip.nVal, 4);
+    memset(nTempBuf, 0, sizeof(nTempBuf));
+    nNum = int_to_ieee754(nConvert);
+    Long2Buf(nTempBuf, nNum, 4);
+    ReverseOutput(nTempBuf, Data, 4);
+    offset += 4;  
+
+    offset = DwinMakeFrm(&Data[0],offset,nAddr[8],0x82);
+    sendDataToLCD(Data, offset);  
+	
+	OSTimeDlyHMSM(0,0,0,5);
+	memset(Data,0,sizeof(Data));
+    //频率
+    
+}
+
+//时间设置界面
+void updateDatetimePage()
+{
+    
+}
 
 
 

@@ -24,6 +24,7 @@ void PutCrcProc(const INT8U * pSrc, INT8U * pDest, INT16U Len);
 void PutCrc16Proc(INT8U *pSrc, INT32U nLen);
 void getCrcProc(const INT8U * pSrc, INT8U * plHFS, INT8U * phHFS, INT16U Len);
 
-INT16U crc16(INT8U *data, INT16U length) ;
+INT16U crc16(const INT8U *data, INT16U length) ;
+void getDwinCrcProc(const INT8U * pSrc, INT8U * plHFS, INT8U * phHFS, INT16U Len);
 #endif //_CHK_CRC_H_
 

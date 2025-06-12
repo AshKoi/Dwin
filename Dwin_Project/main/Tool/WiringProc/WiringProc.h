@@ -23,6 +23,7 @@
 ***************************************************************************************************/
 extern INT8U wiringStatusBitmap;
 
+extern INT8S secondaryResult;
 
 
 

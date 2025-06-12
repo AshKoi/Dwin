@@ -646,7 +646,7 @@ typedef struct _tagMEM_AC_BACK_FLH_DATA
 	INT32U				nBxdlNUM;			//B相断流次数
 	INT32U				nCxdlNUM;			//C相断流次数
     INT8U				nACOffset;		//交采偏差
-    
+    SET_MEM_INFO        sSetParametersInfo; 
     
 
 }MEM_AC_BACK_FLH_DATA, *pMEM_AC_BACK_FLH_DATA;

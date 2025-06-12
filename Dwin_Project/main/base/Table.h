@@ -460,7 +460,17 @@ typedef struct _tagAC_EVT_MEM_INFO
 	INT8U		nMemNum;
 }AC_EVT_MEM_INFO, *pAC_EVT_MEM_INFO;
 
-
+//设置参数
+typedef struct _tag_SET_MEM_INFO
+{
+    INT16U      nBJDL;      //报警电流
+    INT16U      nBJWD;      //报警温度
+    INT16U      nBJWS;      //报警温升
+    INT16U      nQDDL;      //切断电流
+    INT16U      nQDWD;      //切断温度
+    INT16U      nQDWS;      //切断温升
+    INT16U      nJCKG;      //检测开关
+}SET_MEM_INFO,*pSET_MEM_INFO;
 //多功能表电能示值
 typedef struct _tagMT_DGN_ENERGY_DATA
 {

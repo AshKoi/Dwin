@@ -3,7 +3,9 @@
 
 
 
-INT8U wiringStatusBitmap = 0;
+INT8U wiringStatusBitmap    = 0;
+INT8U g_WiringErr           = 0;
+INT8S secondaryResult       = -1;
 
 /*读引脚P40~P4A的staus（GPIO默认输入，上拉使能）*/
 INT8U ReadWiringStatus(void)
@@ -105,10 +107,11 @@ BOOLEAN isWiringNormal()
     //不是LN正常接线或者反接，则一直提示接线错误，不进行下一步
     if (initialResult == -1) {
         // 初判接线错误
+        secondaryResult = -1;
         return FALSE;
     }
 
-    INT8S secondaryResult = secondaryJudgment(initialResult);
+    secondaryResult = secondaryJudgment(initialResult);
     //不是状态2~状态7的值，提示接线错误，不进行下一步
     if (secondaryResult == -1) {
         // 二次判断接线错误

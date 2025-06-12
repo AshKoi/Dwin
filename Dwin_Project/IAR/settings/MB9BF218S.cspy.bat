@@ -19,6 +19,6 @@
 @REM 
 
 
-"D:\IAR6.5\common\bin\cspybat" "D:\IAR6.5\arm\bin\armproc.dll" "D:\IAR6.5\arm\bin\armjlink.dll"  %1 --plugin "D:\IAR6.5\arm\bin\armbat.dll" --macro "D:\IAR6.5\arm\config\debugger\Fujitsu\Trace_MB9Axx_MB9Bxx.dmac" --flash_loader "D:\IAR6.5\arm\config\flashloader\Fujitsu\MB9BF506.board" --backend -B "--endian=little" "--cpu=Cortex-M3" "--fpu=None" "-p" "D:\IAR6.5\arm\CONFIG\debugger\Fujitsu\MB9BF218S.ddf" "--drv_verify_download" "--semihosting" "--device=MB9BF218S" "--drv_communication=USB0" "--jlink_speed=auto" "--jlink_initial_speed=32" "--jlink_reset_strategy=0,0" "--jlink_interface=SWD" "--drv_catch_exceptions=0x000" "--drv_swo_clock_setup=72000000,0,2000000" 
+"D:\IAR6.3\common\bin\cspybat" "D:\IAR6.3\arm\bin\armproc.dll" "D:\IAR6.3\arm\bin\armjlink.dll"  %1 --plugin "D:\IAR6.3\arm\bin\armbat.dll" --macro "D:\IAR6.3\arm\config\debugger\Fujitsu\Trace_MB9Axx_MB9Bxx.dmac" --flash_loader "D:\IAR6.3\arm\config\flashloader\Fujitsu\MB9BF506.board" --backend -B "--endian=little" "--cpu=Cortex-M3" "--fpu=None" "-p" "D:\IAR6.3\arm\CONFIG\debugger\Fujitsu\MB9BF218S.ddf" "--drv_verify_download" "--semihosting" "--device=MB9BF218S" "--drv_communication=USB0" "--jlink_speed=auto" "--jlink_initial_speed=32" "--jlink_reset_strategy=0,0" "--jlink_interface=SWD" "--drv_catch_exceptions=0x000" "--drv_swo_clock_setup=72000000,0,2000000" 
 
 

@@ -881,7 +881,7 @@ static BOOLEAN SecTaskInit(void)
     }
 	
 	/*开机接线检查*/
-	
+	//initialJudgment();
     
 	return TRUE;
 }
@@ -1009,6 +1009,10 @@ static void SecTaskProc(void)
 
 	//秒级处理//(时钟)
 	SecTaskSecProcBack();
+    
+    //接线检查
+    isWiringNormal();
+    
 #if (AC_FUNC_EN == 1)
       //AcCalcProc();
 #endif
@@ -1016,6 +1020,8 @@ static void SecTaskProc(void)
     //BatterProc();
     
 }
+
+
 
 /********************************************************************************
 * 函数名:

@@ -61,7 +61,7 @@ INT8U 	ValToAscii(INT8U *pBuf,INT32U nVal,INT8U nMaxLen);
 INT8U 	ValHexToAscii(INT8U *pBuf,INT32U nVal,INT8U nMaxLen);
 INT8S 	Long2Bcdbuf(INT32U nVal, INT8U *pBuf, INT8U nLen);
 INT32U 	Bcdbuf2Long(const INT8U* pBuf, INT8U nLen);
-INT8S 	Long2Buf(INT8U *pBuf, INT32U nVal, INT8U nLen);
+INT8S 	Long2Buf(INT8U *pBuf, INT64U nVal, INT8U nLen);
 INT32U 	Buf2Long(const INT8U *pBuf, INT8U nLen);
 INT8S 	INT16U2Buf(INT8U *pBuf,INT16U nVal);
 INT16U 	Buf2INT16U(const INT8U *pBuf);

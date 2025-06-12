@@ -244,7 +244,7 @@ INT16U CRC16_Check(INT8U *str, INT8U len)
 */
 
 // CRC-16 计算函数
-INT16U crc16(INT8U *data, INT16U length) 
+INT16U crc16(const INT8U *data, INT16U length) 
 {
     INT16U crc = 0xFFFF;
     for (INT16U i = 0; i < length; i++) 
@@ -263,4 +263,25 @@ INT16U crc16(INT8U *data, INT16U length)
         }
     }
     return crc;
+}
+
+/****************************************************************************
+* 函数名:getDwinCrcProc
+* 输　入:const INT8U *pSrc--需校验的数组首地址
+*	 uchar Len--需校验的字节长度
+* 输　出:uchar *pDest--填充起始地址
+* 返  回:
+* 功  能:将输入的一串字节处理为携带2字节CRC校验码
+****************************************************************************/
+void getDwinCrcProc(const INT8U * pSrc, INT8U * plHFS, INT8U * phHFS, INT16U Len)
+{
+	INT16U tmpCrc;
+
+    INT16U           HFS			=0;
+	INT8U            lHFS			=0;
+	INT8U            hHFS			=0;
+    
+    HFS  = crc16(pSrc, Len);
+	*plHFS = HFS&0x00FF;
+    *phHFS = ( HFS & 0xFF00 ) >> 8;
 }

@@ -94,6 +94,7 @@ static void MSecTimeProc(void)
 		nTCnt = 0;
 		// 刷新软时钟
 		SoftTimerRefresh();
+        //UpDateTime();
 	}
 }
 
@@ -115,7 +116,7 @@ void MSecTaskProc(void)
     MSecTimeProc();
 	
 	//向迪文屏发送时间更新
-	UpDateTime();
+	//UpDateTime();
 
 #if ((ASSIST_RUN == ASSIST_RUN_SIGNAL) || (ASSIST_RUN == ASSIST_RUN_HANDSHIP))
 	MsecRFPacketReceived();
@@ -132,13 +133,12 @@ void UpDateTime()
 {
 	STD_TIME        sTime;
 	INT8U nDateTime[16];
-	INT8U nAddr[2] = {0};
+	INT16U nAddr = 0x0010;
 	INT16U offset = 0;
 	//显示日期时间
     memset(&sTime, 0, sizeof(sTime));  
+    memset(&nDateTime, 0, sizeof(nDateTime)); 
 	 
-	nAddr[0] = 0x00;
-	nAddr[1] = 0x10;
     // 获取日期和时钟
     RTCDateTimeRead(&sTime);
     //日期和时间
@@ -151,8 +151,8 @@ void UpDateTime()
     nDateTime[offset++] = sTime.nSec;   
     nDateTime[offset++] = 0x00;   
 	
-	offset = DwinMakeFrm(&nDateTime[0],offset,&nAddr[0],0x82);
-    //sendDataToLCD(nDateTime, offset); 
+	offset = DwinMakeFrm(&nDateTime[0],offset,nAddr,0x82);
+    sendDataToLCD(nDateTime, offset); 
 }
 
 

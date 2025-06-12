@@ -4,6 +4,7 @@
 #include "SysRes.h"
 #include "PowerOn.h"
 #include "SecTask.h"
+#include "WiringProc.h"
 
 extern INT8S    	g_nBeepFlg;  
 extern INT8S 		g_nContinueKeyFlg;
@@ -237,107 +238,38 @@ void GetKeyValProc0(void)
 	//	nKeyCntNum = 6;
 	//}
 	
-	k =  GpioGetInput(IO_PORT5, IO_PINx9);		//连接按钮
-	M =  GpioGetInput(IO_PORT5, IO_PINxA);		//断开按钮
+	k =  GpioGetInput(IO_PORT5, IO_PINx9);		//连接按钮  1
+	M =  GpioGetInput(IO_PORT5, IO_PINxA);		//断开按钮  1
 	
-	nKeyVal = (k<<1)|M;
-	/*if ((TRIPHASE_METER_220 == g_nHardType)||(TRIPHASE_METER_57 == g_nHardType)||(TRIPHASE_METER_100 == g_nHardType)||(TRIPHASE_METER_57U == g_nHardType)||(TRIPHASE_METER_100U == g_nHardType) || (TRIPHASE_METER_220ZT == g_nHardType))
-	{  
-		GpioConfig(IO_PORTC, IO_PINxF, GPIO_MODE_INPUT);
-		i = GpioGetInput(IO_PORTC, IO_PINxF);
-		if(0x00 == i)
-		nKeyVal = KEY_UP;
-
-		GpioConfig(IO_PORT4, IO_PINx4, GPIO_MODE_INPUT);
-		M =  GpioGetInput(IO_PORT4, IO_PINx4);                   //开接线盖检测口
-		if(0x01 == M)
-		nKeyValTmp = KEY_JG;
-	}
-    GpioConfig(IO_PORT4, IO_PINx3, GPIO_MODE_INPUT);
-    k =  GpioGetInput(IO_PORT4, IO_PINx3);                   //开表盖检测口
-    if(0x01 == k )
-    {
-        nKeyValTmp = KEY_BG;
-        g_RealMeterCoverFlag=KEY_BG;
-    }
-        
-	GpioConfig(IO_PORTC, IO_PINxE, GPIO_MODE_INPUT);
-    j = GpioGetInput(IO_PORTC, IO_PINxE);
-
-	 if(0x00 == j)
-	{
-      nKeyVal = KEY_DOWN;
-    }
-	if (KEY_NULL != nKeyValTmp)
-    {
-        KEY_test(nKeyValTmp);
-    }
+	nKeyVal = (k<<1)|M;     //
     
-	if (KEY_NULL != nKeyVal)
-	{       
-             g_nKey_Flg = KEY_test(nKeyVal);
-                g_nCmt = 0;       
-		g_pKeySamp->nPressCntBak = 0;
-		if ((nKeyVal == g_pKeySamp->nKeyValBak))	
-		{
-			if (g_pKeySamp->nPressCnt < nKeyCntNum)
-			{
-				g_pKeySamp->nPressCnt++;
-			}
-			if (g_pKeySamp->nPressCnt >= nKeyCntNum)
-			{
-				if (g_nContinueKeyFlg)
-				{
-					if ( (KEY_FN == nKeyVal) || (KEY_FUN2 == nKeyVal))
-					{
-						
-					}
-					else
-					{
-						g_pKeySamp->nKeyVal = nKeyVal;
-						g_pKeySamp->nPressCnt = 0;
-					}
-				}
-                                else
-				{
-
-				}
-			}
-                  }
-		else
-		{
-			g_pKeySamp->nKeyVal = KEY_NULL;
-			g_pKeySamp->nPressCnt = 0;
-		}
-	}
-	else
-	{
-		if (g_pKeySamp->nPressCnt >= nKeyCntNum)
-		{
-			if (g_nContinueKeyFlg)
-			{
-				if ((KEY_FN == g_pKeySamp->nKeyValBak) || (KEY_FUN2 == g_pKeySamp->nKeyValBak))
-				{
-					g_pKeySamp->nKeyVal = g_pKeySamp->nKeyValBak;
-				}
-				else
-				{
-
-				}
-			}
-			else
-			{
-				g_pKeySamp->nKeyVal = g_pKeySamp->nKeyValBak;
-			}
-		}
-                g_pKeySamp->nPressCnt = 0;
-		g_pKeySamp->nPressCntBak++;
-		if (g_pKeySamp->nPressCntBak >= 120)
-		{
-			g_pKeySamp->nKeyVal = KEY_NULL;
-			g_pKeySamp->nPressCntBak = 0;
-		}
-	}*/
+    if(nKeyVal == 1)
+    {
+        if((secondaryResult == 2)||(secondaryResult == 3))
+        {
+            GpioSetOutput(IO_PORT7, IO_PINx8); 
+            GpioSetOutput(IO_PORT7, IO_PINx9);
+            GpioClearOutput(IO_PORT7, IO_PINxA);
+        }
+        else if((secondaryResult == 4)||(secondaryResult == 5))
+        {
+            GpioSetOutput(IO_PORT7, IO_PINx8); 
+            GpioClearOutput(IO_PORT7, IO_PINx9);
+            GpioSetOutput(IO_PORT7, IO_PINxA);
+        }
+        else if((secondaryResult == 6)||(secondaryResult == 7))
+        {
+            GpioClearOutput(IO_PORT7, IO_PINx8); 
+            GpioSetOutput(IO_PORT7, IO_PINx9);
+            GpioSetOutput(IO_PORT7, IO_PINxA);
+        }
+    }
+    else
+    {
+        GpioSetOutput(IO_PORT7, IO_PINx8); 
+        GpioSetOutput(IO_PORT7, IO_PINx9);
+        GpioSetOutput(IO_PORT7, IO_PINxA);
+    }
                 
 	g_pKeySamp->nKeyValBak = nKeyVal;
 }
